@@ -16,6 +16,14 @@ CHANGEMAP_REGEX = /changelevel/
 
 ROUNDEND_REGEX = /^#{TIMESTAMP_REGEX}Team \"(CT|TERRORIST)\" triggered \"(Target_Bombed|Target_Saved|Bomb_Defused|CTs_Win|Terrorists_Win)\" \(CT \"([0-9]{1,2})\"\) \(T "([0-9]{1,2})"\)/
 
+# stub
+module RCon::Query
+  class Original
+    def command(cmd)
+      return
+    end
+  end
+end
 
 module RConBot
 
@@ -102,11 +110,6 @@ module RConBot
 
   end
 
-  class PlayerStats
-    attr_accessor :redis_connection
-
-  end
-
   class Bot
     attr_accessor :match
     attr_reader :rcon_connection
@@ -123,41 +126,49 @@ module RConBot
         f = File.open(filename, "r")
         f.seek(0, IO::SEEK_END)
         while true do
-          select([f])
+          select([f]) # waits here
           line = f.gets
-          wait(line, @match.status)
+          wait_on_join(line) if @match.status == :wait_on_join
+          wait_on_ready(line, :first_half) if @match.status == :first_warmup
+          go_live if @match.status == :first_half and !@match.live?
+          process_match(line) if @match.status = :first_half and @match.live?
+          wait_on_ready(line, :second_half) if @match.status == :second_warmup
+          go_live if @match.status == :second_half and !@match.live?
+          process_match(line) if @match.status = :second_half and @match.live?
         end
       end
     end
 
-    def wait(line, status)
-      case status
-      when :wait_on_join
-        @match.status = :first_warmup if line =~ /connected/
-      when :first_warmup
-        @match.status = :first_half if line =~ /say ready/
-      when :second_warmup
-        @match.status = :second_half if line =~ /say ready/
-      when :first_half, :second_half
-        process_line(line)
-      when 
+    def go_live
+      @rcon_connection.command("exec live.cfg")
+      @match.start
+    end
+
+    def wait_on_join(line)
+      @match.status = :first_warmup if line =~ /connected/      
+    end
+
+    def wait_on_ready(line, status)
+      begin
+        Timeout::timeout(30) do
+          @match.status = status if line =~ /say ready/
+        end
+      rescue
+        @rcon_connection.command("say ready when ready")
       end
     end
 
-    def process_line(line)
-      if !@match.result and (m = LIVE_REGEX.match(line) or  m = /sv_restart/.match(line)) # to be removed for rconbot (strict)
-        puts "LIVE!!! HALF => #{@match.half + 1}"
-        @match.start
-      # elsif m = CHANGEMAP_REGEX.match(line)
-      #   # @match = Match.new('a', 'b', 'inferno')
-      elsif @match.live? and m = KILL_REGEX.match(line)
+    def process_match(line)
+      # if !@match.result and (m = LIVE_REGEX.match(line) or m = /sv_restart/.match(line)) # to be removed for rconbot (strict)
+      #   puts "LIVE!!! HALF => #{@match.half + 1}"
+      # @match.start
+
+      if @match.live? and m = KILL_REGEX.match(line)
         t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
         raise l if k_steam_id == v_steam_id # can happen in suicide
         
         @match.alive[v_team] -= 1
 
-        $healths[v_steam_id] ||= 100
-        
         # add aliases in case of change
         $redis.zincrby("alias:#{k_steam_id}", 1, k_name)
         $redis.zincrby("alias:#{v_steam_id}", 1, v_name)
@@ -190,8 +201,6 @@ module RConBot
         #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
         #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
         #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
-        
-        #   $healths[t_steam_id] = health
       elsif @match.live? and m = ROUNDEND_REGEX.match(line)
         t, winner, reason, ct_score, t_score = m.to_a
 
@@ -222,7 +231,6 @@ module RConBot
         puts "RESULT => #{@match.teams[@match.result]}" if @match.result
 
         @match.next_round
-        $healths = {}
       end
     end
     
@@ -245,7 +253,6 @@ puts "-" * 102
 
 
 $alive = {'CT' => 5, 'TERRORIST' => 5}
-$healths = {} # keeps track of player health, if does not exist 100 is assumed
 
 def stats
   puts '*' * 100
