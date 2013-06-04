@@ -1,6 +1,12 @@
 require 'redis'
 require 'rcon'
+require 'timeout'
 
+`rm logs/test.log`
+`touch logs/test.log`
+
+$redis = Redis.new(:host => 'localhost', :port => '6379', :db => 6)
+$redis.flushdb
 
 TIMESTAMP_REGEX = "L 0?[0-9]\/[0-9]{2}\/[0-9]{4} - [0-9]{2}:[0-9]{2}:[0-9]{2}: "
 
@@ -15,15 +21,6 @@ LIVE_REGEX = /^#{TIMESTAMP_REGEX}Rcon: \"rcon [0-9]* \".*\" exec live.cfg" from 
 CHANGEMAP_REGEX = /changelevel/
 
 ROUNDEND_REGEX = /^#{TIMESTAMP_REGEX}Team \"(CT|TERRORIST)\" triggered \"(Target_Bombed|Target_Saved|Bomb_Defused|CTs_Win|Terrorists_Win)\" \(CT \"([0-9]{1,2})\"\) \(T "([0-9]{1,2})"\)/
-
-# stub
-module RCon::Query
-  class Original
-    def command(cmd)
-      return
-    end
-  end
-end
 
 module RConBot
 
@@ -52,8 +49,8 @@ module RConBot
   end
 
   class Match
-    attr_reader :max_rounds, :team_size, :result, :team1, :team2, :alive, :stats, :status
-    attr_accessor :half, :score, :result
+    attr_reader :max_rounds, :team_size, :result, :team1, :team2, :alive, :stats
+    attr_accessor :half, :score, :result, :status
     
     def initialize(team1 = '1', team2 = '2', map = 'dust2')
       @live = false
@@ -120,50 +117,45 @@ module RConBot
       @rcon_connection.command("sv_password #{options[:sv_password]}")
       options[:maps].each do |map|
         @match = Match.new(options[:team1], options[:team2], map)
-        @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
+        # @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
         @rcon_connection.command("changelevel #{map}")
         filename =  @match.log_filename
         f = File.open(filename, "r")
         f.seek(0, IO::SEEK_END)
         while true do
-          select([f]) # waits here
+          select([f]) # linux support only (non-blocking IO.select)
           line = f.gets
           wait_on_join(line) if @match.status == :wait_on_join
           wait_on_ready(line, :first_half) if @match.status == :first_warmup
-          go_live if @match.status == :first_half and !@match.live?
-          process_match(line) if @match.status = :first_half and @match.live?
+          # go_live if @match.status == :first_half and !@match.live?
+          process_match(line) if @match.live? and @match.status == :first_half
           wait_on_ready(line, :second_half) if @match.status == :second_warmup
-          go_live if @match.status == :second_half and !@match.live?
-          process_match(line) if @match.status = :second_half and @match.live?
+          # go_live if @match.status == :second_half and !@match.live?
+          process_match(line) if @match.live? and @match.status == :second_half
         end
       end
-    end
-
-    def go_live
-      @rcon_connection.command("exec live.cfg")
-      @match.start
     end
 
     def wait_on_join(line)
-      @match.status = :first_warmup if line =~ /connected/      
+      puts "WAIT ON JOIN"
+      @match.status = :first_warmup if line =~ /connected/
+      sleep(5)
     end
 
     def wait_on_ready(line, status)
-      begin
-        Timeout::timeout(30) do
-          @match.status = status if line =~ /say ready/
-        end
-      rescue
-        @rcon_connection.command("say ready when ready")
+      puts "WAIT ON READY"
+      if line =~ /say ready/
+        @match.status = status
+        @rcon_connection.command("exec live.cfg")
       end
+      @rcon_connection.command("say ready when ready")
+      sleep(5)
     end
 
     def process_match(line)
-      # if !@match.result and (m = LIVE_REGEX.match(line) or m = /sv_restart/.match(line)) # to be removed for rconbot (strict)
-      #   puts "LIVE!!! HALF => #{@match.half + 1}"
-      # @match.start
-
-      if @match.live? and m = KILL_REGEX.match(line)
+      if m = LIVE_REGEX.match(line)
+        @match.start
+      elsif m = KILL_REGEX.match(line)
         t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
         raise l if k_steam_id == v_steam_id # can happen in suicide
         
@@ -201,7 +193,7 @@ module RConBot
         #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
         #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
         #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
-      elsif @match.live? and m = ROUNDEND_REGEX.match(line)
+      elsif m = ROUNDEND_REGEX.match(line)
         t, winner, reason, ct_score, t_score = m.to_a
 
         if @match.half == 0
@@ -233,26 +225,8 @@ module RConBot
         @match.next_round
       end
     end
-    
   end
-  
 end
-
-
-# rconbot + statcollector
-`rm logs/test.log`
-`touch logs/test.log`
-
-
-# $rcon = RCon::Query::Original.new("schubert.com", '27015', 'tuesdaysgone')
-
-$redis = Redis.new(:host => 'localhost', :port => '6379', :db => 6)
-$redis.flushdb
-
-puts "-" * 102
-
-
-$alive = {'CT' => 5, 'TERRORIST' => 5}
 
 def stats
   puts '*' * 100
