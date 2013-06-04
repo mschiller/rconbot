@@ -49,8 +49,8 @@ module RConBot
   end
 
   class Match
-    attr_reader :max_rounds, :team_size, :result, :team1, :team2, :alive, :stats
-    attr_accessor :half, :score, :result, :status
+    attr_reader :max_rounds, :team_size, :result, :team1, :team2, :stats
+    attr_accessor :half, :score, :result, :status, :alive
     
     def initialize(team1 = '1', team2 = '2', map = 'dust2')
       @live = false
@@ -62,6 +62,7 @@ module RConBot
       @score = [[0, 0], [0, 0]]
       @stats = Stats.new(team1, team2, map)
       @status = :wait_on_join # :wait_on_join :first_warmup :first_half :second_warmup :second_half :finished
+      @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
     end
 
     def teams
@@ -109,12 +110,18 @@ module RConBot
 
   class Bot
     attr_accessor :match
-    attr_reader :rcon_connection
+    # attr_reader :rcon_connection # private
     
     # options :team1 :team2 :maps :timelimit
     def connect(host, port, password, options = {})
+      options[:team1] ||= 'team1'
+      options[:team2] ||= 'team2'
+      options[:maps] ||= ['de_dust2']
+      options[:sv_password] ||= 'testing'
+      
       @rcon_connection = RCon::Query::Original.new(host, port, password)
       @rcon_connection.command("rcon sv_password #{options[:sv_password]}")
+
       options[:maps].each do |map|
         @match = Match.new(options[:team1], options[:team2], map)
         # @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
@@ -124,10 +131,8 @@ module RConBot
         f.seek(0, IO::SEEK_END)
         @match.status = wait_on_join(f)
         @match.status = wait_on_ready(f, :first_half)
-        # go_live if @match.status == :first_half and !@match.live?
         @match.status = process_match(f)
         @match.status = wait_on_ready(f, :second_half)
-        # go_live if @match.status == :second_half and !@match.live?
         @match.status = process_match(f)
       end
     end
@@ -171,76 +176,81 @@ module RConBot
         select([f])
         line = f.gets
         if m = LIVE_REGEX.match(line)
+          puts "LIVE!!!"
           @match.start
-          if m = KILL_REGEX.match(line)
-            t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
-            raise l if k_steam_id == v_steam_id # can happen in suicide
+        elsif @match.live? and m = KILL_REGEX.match(line)
+          t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
+          raise l if k_steam_id == v_steam_id # can happen in suicide
+          
+          @match.alive[v_team] -= 1
             
-            @match.alive[v_team] -= 1
+          # add aliases in case of change
+          # $redis.zincrby("alias:#{k_steam_id}", 1, k_name)
+          # $redis.zincrby("alias:#{v_steam_id}", 1, v_name)
+          
+          # kills
+          #k = $redis.incr("kills:#{k_steam_id}") #unless k_team == v_team # friendly fire
+          # deaths
+          #d = $redis.incr("deaths:#{v_steam_id}") #unless
+          
+          # points for killer
+          points = ((@match.team_size - @match.alive[k_team]) + (@match.team_size - @match.alive[v_team]))
+          points = 0 if k_team == v_team # friendly fire
+          
+          case k_team
+          when 'CT'
+            # $redis.zincrby("skill.ct", points, k_steam_id)
+          when 'TERRORIST'
+            # $redis.zincrby("skill.t", points, k_steam_id)
+          end
+          
+          puts " -- #{k_name[0..4]} (#{k_team[0]}) killed #{v_name[0..4]} (#{v_team[0]}) with #{weapon} -- #{points} #{'wtf' if k_team == v_team} #{@match.alive.inspect}"
             
-            # add aliases in case of change
-            # $redis.zincrby("alias:#{k_steam_id}", 1, k_name)
-            # $redis.zincrby("alias:#{v_steam_id}", 1, v_name)
-            
-            # kills
-            #k = $redis.incr("kills:#{k_steam_id}") #unless k_team == v_team # friendly fire
-            # deaths
-            #d = $redis.incr("deaths:#{v_steam_id}") #unless
-              
-            # points for killer
-            points = ((@match.team_size - @match.alive[k_team]) + (@match.team_size - @match.alive[v_team]))
-            points = 0 if k_team == v_team # friendly fire
-            
-            case k_team
-            when 'CT'
-              # $redis.zincrby("skill.ct", points, k_steam_id)
-            when 'TERRORIST'
-              # $redis.zincrby("skill.t", points, k_steam_id)
-            end
-            
-            puts " -- #{k_name[0..4]} (#{k_team[0]}) killed #{v_name[0..4]} (#{v_team[0]}) with #{weapon} -- #{points} #{'wtf' if k_team == v_team} #{@match.alive.inspect}"
-            
-            # $redis.zincrby("skill.#{weapon}", points, k_steam_id)
-            # $redis.zincrby("weapon.usage", 1, weapon)
-            
-            # PROBABLY BAD TECHNIQUE : update the score in (currently updating the ratio only)
-            # $redis.zadd("ratio", k.to_f/# $redis.get("deaths:#{k_steam_id}").to_f, k_steam_id)
-            # $redis.zadd("ratio", # $redis.get("kills:#{v_steam_id}").to_f/d.to_f, v_steam_id)
-            # elsif $live and m = ATTACK_REGEX.match(line)
-            #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
-            #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
-            #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
-          elsif m = ROUNDEND_REGEX.match(line)
-            t, winner, reason, ct_score, t_score = m.to_a
-            
-            if @match.half == 0
-              @match.score[@match.half][0] = ct_score.to_i
-              @match.score[@match.half][1] = t_score.to_i
-            elsif @match.half == 1
-              @match.score[@match.half][1] = ct_score.to_i
-              @match.score[@match.half][0] = t_score.to_i
-            end
-            
-            puts "HALF #{@match.half + 1}, ROUND #{@match.round}, SCORE #{@match.team1} => #{@match.score[@match.half][0]}, #{@match.team2} => #{@match.score[@match.half][1]} #{reason}"
-            
+          # $redis.zincrby("skill.#{weapon}", points, k_steam_id)
+          # $redis.zincrby("weapon.usage", 1, weapon)
+          
+          # PROBABLY BAD TECHNIQUE : update the score in (currently updating the ratio only)
+          # $redis.zadd("ratio", k.to_f/# $redis.get("deaths:#{k_steam_id}").to_f, k_steam_id)
+          # $redis.zadd("ratio", # $redis.get("kills:#{v_steam_id}").to_f/d.to_f, v_steam_id)
+          # elsif $live and m = ATTACK_REGEX.match(line)
+          #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
+          #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
+          #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
+        elsif @match.live? and m = ROUNDEND_REGEX.match(line)
+          t, winner, reason, ct_score, t_score = m.to_a
+          
+          if @match.half == 0
+            @match.score[@match.half][0] = ct_score.to_i
+            @match.score[@match.half][1] = t_score.to_i
+          elsif @match.half == 1
+            @match.score[@match.half][1] = ct_score.to_i
+            @match.score[@match.half][0] = t_score.to_i
+          end
+          
+          puts "HALF #{@match.half + 1}, ROUND #{@match.round}, SCORE #{@match.team1} => #{@match.score[@match.half][0]}, #{@match.team2} => #{@match.score[@match.half][1]} #{reason}"
+          
+          if @match.round == @match.max_rounds
+            @match.stop
+            @match.half += 1
+            return :second_warmup
+          else
             if @match.team_score(0) == 16 
               @match.stop
-              @match.result = 0 # CT
+              @match.result = 0 # team1 (CT first T second)
             elsif @match.team_score(1) == 16
               @match.stop 
-              @match.result = 1 # T
-            elsif @match.round == @match.max_rounds
-              @match.stop
-              @match.half += 1
+              @match.result = 1 # team2
             elsif @match.round == @match.max_rounds * 2
               @match.stop
               @match.result = -1 # Draw
             end
-            
-            puts "RESULT => #{@match.teams[@match.result]}" if @match.result
-            
-            @match.next_round
+
+            if @match.result
+              puts "RESULT => #{@match.teams[@match.result]}" 
+              return :finish
+            end
           end
+          @match.next_round
         end
       end
     end
