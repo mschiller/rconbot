@@ -141,10 +141,11 @@ module RConBot
       while true do
         select([f])
         line = f.gets
-        print '.'
-        sleep(1)
+        #print '.'
+        #sleep(5)
         if line =~ /connected/
           puts "CONNECTED"
+          @rcon_connection.command("rcon say \"WARMUP GUYS!!!\"")
           return :first_warmup 
         end
       end
@@ -152,12 +153,12 @@ module RConBot
 
     def wait_on_ready(f, status)
       begin
-        Timeout::timeout(5) do
+        Timeout::timeout(15) do
           while true do
             select([f])
             line = f.gets
-            print '.'
-            sleep(1)
+            #print '.'
+            #sleep(5)
             if line =~ /say ready/
               puts "ALL READY"
               @rcon_connection.command("rcon exec live.cfg")
@@ -167,6 +168,7 @@ module RConBot
         end
       rescue => e 
         @rcon_connection.command("rcon say \"say ready when ready\"")
+        # FIXME: can cause a stack level to deep error!!!
         wait_on_ready(f, status)
       end
     end
@@ -247,7 +249,7 @@ module RConBot
 
             if @match.result
               puts "RESULT => #{@match.teams[@match.result]}" 
-              return :finish
+              return :finished
             end
           end
           @match.next_round
