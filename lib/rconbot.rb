@@ -18,6 +18,8 @@ module RconBot
   READY_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} say \"ready\"/
   
   CONNECTED_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} connected/
+
+  ENTERED_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} entered the game/
   
   KILL_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} killed #{PLAYER_FORMAT} with \"([a-z0-9]*)\"$/
   

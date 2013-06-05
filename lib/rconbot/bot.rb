@@ -9,16 +9,22 @@ module RconBot
       options[:maps] ||= ['de_dust2']
       options[:sv_password] ||= rand(100) # to be mailed to captains
       
+      # connect as rcon
       @rcon_connection = RconConnection.new(host, port, password)
+      # set a password
       @rcon_connection.command("sv_password \"#{options[:sv_password]}\"")
+
+      # monitor the logs 
+      filename = log_filename
+      f = File.open(filename, "r")
+      f.seek(0, IO::SEEK_END)
+
+      # kick everyone
+      # @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
 
       options[:maps].each do |map|
         @match = Match.new(options[:team1], options[:team2], map)
-        # @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
         @rcon_connection.command("changelevel #{map}")
-        filename =  @match.log_filename
-        f = File.open(filename, "r")
-        f.seek(0, IO::SEEK_END)
         @match.status = wait_on_join(f)
         [:first_half, :second_half].each do |half|
           @match.status = wait_on_ready(f, half)
@@ -31,8 +37,8 @@ module RconBot
       while true do
         select([f])
         line = f.gets
-        if line =~ CONNECTED_REGEX
-          puts "CONNECTED"
+        if line =~ ENTERED_REGEX
+          puts "ENTERED"
           @rcon_connection.command("exec warmup.cfg")
           return :first_warmup
         end
@@ -146,6 +152,10 @@ module RconBot
           @match.next_round
         end
       end
+    end
+
+    def log_filename
+      '/home/hlds/hlds_screen.log'
     end
   end
 end
