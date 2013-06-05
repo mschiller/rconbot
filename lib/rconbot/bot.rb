@@ -22,7 +22,7 @@ module RconBot
         @match.status = wait_on_join(f)
         [:first_half, :second_half].each do |half|
           @match.status = wait_on_ready(f, half)
-          @match.status = process_match(f, half)
+          @match.status = process_match(f)
         end
       end
     end
@@ -53,13 +53,14 @@ module RconBot
           end
         end
       rescue => e 
+        @rcon_connection.command("say Rconbot is at your service...")
         @rcon_connection.command("say say ready when ready")
         # FIXME: can cause a stack level to deep error!!!
         wait_on_ready(f, status)
       end
     end
 
-    def process_match(f, half)
+    def process_match(f)
       while true do 
         select([f])
         line = f.gets
