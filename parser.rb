@@ -1,6 +1,6 @@
 # require 'redis'
-require 'rcon'
 require 'timeout'
+require 'socket'
 
 `rm /tmp/test.log`
 `touch /tmp/test.log`
@@ -8,22 +8,67 @@ require 'timeout'
 # $redis = Redis.new(:host => 'localhost', :port => '6379', :db => 6)
 # $redis.flushdb
 
-TIMESTAMP_REGEX = "L 0?[0-9]\/[0-9]{2}\/[0-9]{4} - [0-9]{2}:[0-9]{2}:[0-9]{2}: "
+TIMESTAMP_FORMAT = "L 0?[0-9]\/[0-9]{2}\/[0-9]{4} - [0-9]{2}:[0-9]{2}:[0-9]{2}:"
 
-KILL_REGEX = /^#{TIMESTAMP_REGEX}\"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><(CT|TERRORIST)>\" killed \"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><(CT|TERRORIST)>\" with \"([a-z0-9]*)\"$/
+PLAYER_FORMAT = "\"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><(CT|TERRORIST)?>\""
 
-MAP_REGEX = /changelevel/
+READY_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} say \"ready\"/
 
-ATTACK_REGEX = /^#{TIMESTAMP_REGEX}\"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><(CT|TERRORIST)>\" attacked \"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><(CT|TERRORIST)>\" with \"([a-z0-9]*)\" \(damage \"([0-9]*)\"\) \(damage_armor \"([0-9]*)\"\) \(health \"([0-9]*)\"\) \(armor \"([0-9]*)\"\)$/
+CONNECTED_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} connected/
 
-LIVE_REGEX = /^#{TIMESTAMP_REGEX}Rcon: \"rcon [0-9]* \".*\" exec live.cfg" from \"[0-9\.:]*\"/
+KILL_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} killed #{PLAYER_FORMAT} with \"([a-z0-9]*)\"$/
 
-CHANGEMAP_REGEX = /changelevel/
+ATTACK_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} attacked #{PLAYER_FORMAT} with \"([a-z0-9]*)\" \(damage \"([0-9]*)\"\) \(damage_armor \"([0-9]*)\"\) \(health \"([0-9]*)\"\) \(armor \"([0-9]*)\"\)$/
 
-ROUNDEND_REGEX = /^#{TIMESTAMP_REGEX}Team \"(CT|TERRORIST)\" triggered \"(Target_Bombed|Target_Saved|Bomb_Defused|CTs_Win|Terrorists_Win)\" \(CT \"([0-9]{1,2})\"\) \(T "([0-9]{1,2})"\)/
+LIVE_REGEX = /^#{TIMESTAMP_FORMAT} Rcon: \"rcon [0-9]* \".*\" exec live.cfg" from \"[0-9\.:]*\"/
 
-module RConBot
+ROUNDEND_REGEX = /^#{TIMESTAMP_FORMAT} Team \"(CT|TERRORIST)\" triggered \"(Target_Bombed|Target_Saved|Bomb_Defused|CTs_Win|Terrorists_Win)\" \(CT \"([0-9]{1,2})\"\) \(T "([0-9]{1,2})"\)/
 
+module RconBot
+
+  class RconConnection
+    def initialize(host, port, password, type = 'l')
+      @host = host
+      @port = port
+      @password = password
+      @server_type = type
+      connect
+      get_challenge_id
+    end
+    
+    def get_challenge_id
+      response = socket_request("\xFF" * 4 + "challenge rcon" + "\x00", true)
+      if challenge_id = /challenge rcon (\d+)/.match(response)
+        @challenge_id = challenge_id[1]
+      end
+    end
+    
+    def command(request)
+      socket_request("\xFF" * 4 + "rcon #{@challenge_id} \"#{@password}\" #{request}" + "\x00", true)
+    end
+    
+    def connect
+      @socket = UDPSocket.new
+      @socket.connect(@host, @port)
+    end
+
+    def socket_request(request, challenge = false)
+      puts "=> #{request.inspect}"
+      @socket.print(request)
+      retval = []
+      loop do 
+        select([@socket], nil, nil, 1)
+        str = @socket.recv(65507)
+        puts "<= #{str.inspect}"
+        bytes = str.unpack("c*")
+        puts str[(challenge ? 4 : 5)..-2]
+        retval += bytes
+        break
+      end
+      return retval.pack('c*')
+    end
+  end
+  
   class Stats
     def initialize(team1, team2, map)
       @stats_key_prefix = "#{team1}:#{team2}:#{map}"
@@ -48,6 +93,8 @@ module RConBot
     
   end
 
+  # match is a single game with 15 rounds each half, race to 16
+  # a match is played on a single map
   class Match
     attr_reader :max_rounds, :team_size, :result, :team1, :team2, :stats
     attr_accessor :half, :score, :result, :status, :alive
@@ -56,7 +103,7 @@ module RConBot
       @live = false
       @half = 0
       @team_size = 5
-      @max_rounds = 15
+      @max_rounds = 2
       @team1 = team1
       @team2 = team2
       @score = [[0, 0], [0, 0]]
@@ -103,14 +150,15 @@ module RConBot
     end
     
     def log_filename
-      '/tmp/test.log'
+      '/home/hlds/hlds_screen.log' # '/tmp/test.log'
     end
 
   end
 
+  # can monitor N number of matches 
   class Bot
     attr_accessor :match
-    # attr_reader :rcon_connection # private
+    attr_reader :rcon_connection # must not be there cuz private
     
     # options :team1 :team2 :maps :timelimit
     def connect(host, port, password, options = {})
@@ -119,13 +167,13 @@ module RConBot
       options[:maps] ||= ['de_dust2']
       options[:sv_password] ||= 'testing'
       
-      @rcon_connection = RCon::Query::Original.new(host, port, password)
-      @rcon_connection.command("rcon sv_password #{options[:sv_password]}")
+      @rcon_connection = RconConnection.new(host, port, password)
+      @rcon_connection.command("sv_password \"#{options[:sv_password]}\"")
 
       options[:maps].each do |map|
         @match = Match.new(options[:team1], options[:team2], map)
         # @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
-        @rcon_connection.command("rcon changelevel #{map}")
+        @rcon_connection.command("changelevel #{map}")
         filename =  @match.log_filename
         f = File.open(filename, "r")
         f.seek(0, IO::SEEK_END)
@@ -143,9 +191,9 @@ module RConBot
         line = f.gets
         #print '.'
         #sleep(5)
-        if line =~ /connected/
+        if line =~ CONNECTED_REGEX
           puts "CONNECTED"
-          @rcon_connection.command("rcon say \"WARMUP GUYS!!!\"")
+          # @rcon_connection.command("say WARMUP GUYS!!!")
           return :first_warmup 
         end
       end
@@ -153,21 +201,21 @@ module RConBot
 
     def wait_on_ready(f, status)
       begin
-        Timeout::timeout(15) do
+        Timeout::timeout(5) do
           while true do
             select([f])
             line = f.gets
             #print '.'
             #sleep(5)
-            if line =~ /say ready/
+            if line =~ READY_REGEX
               puts "ALL READY"
-              @rcon_connection.command("rcon exec live.cfg")
+              @rcon_connection.command("exec live.cfg")
               return status
             end
           end
         end
       rescue => e 
-        @rcon_connection.command("rcon say \"say ready when ready\"")
+        @rcon_connection.command("say say ready when ready")
         # FIXME: can cause a stack level to deep error!!!
         wait_on_ready(f, status)
       end
@@ -177,7 +225,7 @@ module RConBot
       while true do 
         select([f])
         line = f.gets
-        if m = LIVE_REGEX.match(line)
+        if m = LIVE_REGEX.match(line) or m = /sv_restart/.match(line)
           puts "LIVE!!!"
           @match.start
         elsif @match.live? and m = KILL_REGEX.match(line)
@@ -247,8 +295,12 @@ module RConBot
               @match.result = -1 # Draw
             end
 
-            if @match.result
-              puts "RESULT => #{@match.teams[@match.result]}" 
+            if @match.result 
+              if @match.result != -1
+                puts "RESULT => DRAW" 
+              else
+                puts "RESULT => #{@match.teams[@match.result]}" 
+              end
               return :finished
             end
           end
