@@ -96,14 +96,14 @@ module RconBot
   # match is a single game with 15 rounds each half, race to 16
   # a match is played on a single map
   class Match
-    attr_reader :max_rounds, :team_size, :result, :team1, :team2, :stats
+    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats
     attr_accessor :half, :score, :result, :status, :alive
     
     def initialize(team1 = '1', team2 = '2', map = 'dust2')
       @live = false
-      @half = 0
       @team_size = 5
-      @max_rounds = 2
+      @half = 0
+      @half_length = 5
       @team1 = team1
       @team2 = team2
       @score = [[0, 0], [0, 0]]
@@ -115,6 +115,12 @@ module RconBot
     def teams
       [@team1, @team2]
     end
+    
+    # def half
+    #   return 0 if status == :first_half
+    #   return 1 if status == :second_half
+    #   return nil
+    # end
     
     def start
       @live = true
@@ -279,24 +285,24 @@ module RconBot
           
           puts "HALF #{@match.half + 1}, ROUND #{@match.round}, SCORE #{@match.team1} => #{@match.score[@match.half][0]}, #{@match.team2} => #{@match.score[@match.half][1]} #{reason}"
           
-          if @match.round == @match.max_rounds
+          if @match.round == @match.half_length
             @match.stop
             @match.half += 1
             return :second_warmup
           else
-            if @match.team_score(0) == 16 
+            if @match.team_score(0) == @match.half_length + 1
               @match.stop
               @match.result = 0 # team1 (CT first T second)
-            elsif @match.team_score(1) == 16
+            elsif @match.team_score(1) == @match.half_length + 1
               @match.stop 
               @match.result = 1 # team2
-            elsif @match.round == @match.max_rounds * 2
+            elsif @match.round == (@match.half_length * 2)
               @match.stop
               @match.result = -1 # Draw
             end
 
-            if @match.result 
-              if @match.result != -1
+            if @match.result
+              if @match.result == -1
                 puts "RESULT => DRAW" 
               else
                 puts "RESULT => #{@match.teams[@match.result]}" 
