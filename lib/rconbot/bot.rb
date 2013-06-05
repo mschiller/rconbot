@@ -20,10 +20,10 @@ module RconBot
         f = File.open(filename, "r")
         f.seek(0, IO::SEEK_END)
         @match.status = wait_on_join(f)
-        @match.status = wait_on_ready(f, :first_half)
-        @match.status = process_match(f)
-        @match.status = wait_on_ready(f, :second_half)
-        @match.status = process_match(f)
+        [:first_half, :second_half].each do |half|
+          @match.status = wait_on_ready(f, half)
+          @match.status = process_match(f, half)
+        end
       end
     end
 
@@ -34,7 +34,7 @@ module RconBot
         if line =~ CONNECTED_REGEX
           puts "CONNECTED"
           @rcon_connection.command("exec warmup.cfg")
-          return :first_warmup 
+          return :first_warmup
         end
       end
     end
@@ -45,8 +45,6 @@ module RconBot
           while true do
             select([f])
             line = f.gets
-            #print '.'
-            #sleep(5)
             if line =~ READY_REGEX
               puts "ALL READY"
               @rcon_connection.command("exec live.cfg")
@@ -61,7 +59,7 @@ module RconBot
       end
     end
 
-    def process_match(f)
+    def process_match(f, half)
       while true do 
         select([f])
         line = f.gets
@@ -121,7 +119,7 @@ module RconBot
           
           if @match.round == @match.half_length
             @match.switch
-
+            @rcon_connection.command("exec warmup.cfg")
             return :second_warmup
           else
             if @match.team_score(0) == @match.half_length + 1

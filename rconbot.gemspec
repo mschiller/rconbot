@@ -9,8 +9,8 @@ Gem::Specification.new do |spec|
   spec.authors     = ["Schubert Cardozo"]
   spec.email       = ["cardozoschubert@gmail.com"]
   spec.homepage    = "https://github.com/saturnine/rconbot"
-  spec.summary     = %q{A sortable and searchable list backed by Redis}
-  spec.description = %q{A sortable and searchable list backed by Redis.  You can use it as a quick actionable workflow queue which you can search/sort and paginate through}
+  spec.summary     = %q{A bot that sits on your server, administrates a match, collects statistics, and records via HLTV}
+  spec.description = %q{A bot that sits on your server, administrates a match, collects statistics, and records via HLTV}
 
   spec.rubyforge_project = "rconbot"
 

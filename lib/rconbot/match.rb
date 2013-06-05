@@ -7,19 +7,19 @@ module RconBot
       @live = false
       @team_size = 5
       @half = 0
-      @half_length = 1
+      @half_length = 2
       @team1 = team1
       @team2 = team2
       @score = [[0, 0], [0, 0]]
-      @stats = Stats.new(team1, team2, map)
+      # @stats = Stats.new(team1, team2, map)
       @status = :wait_on_join # :wait_on_join :first_warmup :first_half :second_warmup :second_half :finished
       @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
     end
 
     def switch
-      @match.stop
-      @match.half += 1
-      @match.status = :second_warmup
+      stop
+      @half += 1
+      @status = :second_warmup
     end
 
     def teams
@@ -61,10 +61,6 @@ module RconBot
       @map
     end
 
-    def stats
-      
-    end
-    
     def log_filename
       '/home/hlds/hlds_screen.log' # '/tmp/test.log'
     end
