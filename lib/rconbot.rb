@@ -13,13 +13,17 @@ module RconBot
 
   TIMESTAMP_FORMAT = "L 0?[0-9]\/[0-9]{2}\/[0-9]{4} - [0-9]{2}:[0-9]{2}:[0-9]{2}:"
   
-  PLAYER_FORMAT = "\"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><(CT|TERRORIST)?>\""
+  TEAM_FORMAT = "(CT|TERRORIST)"  
+
+  PLAYER_FORMAT = "\"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><#{TEAM_FORMAT}?>\""
   
   READY_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} say \"ready\"/
   
   CONNECTED_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} connected/
 
   ENTERED_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} entered the game/
+
+  JOINED_TEAM_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} joined team \"#{TEAM_FORMAT}\"/
   
   KILL_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} killed #{PLAYER_FORMAT} with \"([a-z0-9]*)\"$/
   
@@ -27,7 +31,7 @@ module RconBot
   
   LIVE_REGEX = /^#{TIMESTAMP_FORMAT} Rcon: \"rcon [0-9]* \".*\" exec live.cfg" from \"[0-9\.:]*\"/
   
-  ROUNDEND_REGEX = /^#{TIMESTAMP_FORMAT} Team \"(CT|TERRORIST)\" triggered \"(Target_Bombed|Target_Saved|Bomb_Defused|CTs_Win|Terrorists_Win)\" \(CT \"([0-9]{1,2})\"\) \(T "([0-9]{1,2})"\)/
+  ROUNDEND_REGEX = /^#{TIMESTAMP_FORMAT} Team \"#{TEAM_FORMAT}\" triggered \"(Target_Bombed|Target_Saved|Bomb_Defused|CTs_Win|Terrorists_Win)\" \(CT \"([0-9]{1,2})\"\) \(T "([0-9]{1,2})"\)/
   
   def self.stats
     puts '*' * 100
