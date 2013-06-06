@@ -25,10 +25,10 @@ module RconBot
       options[:maps].each do |map|
         @match = Match.new(options[:team1], options[:team2], map)
         @rcon_connection.command("changelevel #{map}")
-        @match.status = wait_on_join(f)
+        wait_on_join(f)
         [:first_half, :second_half].each do |half|
-          @match.status = wait_on_ready(f, half)
-          @match.status = process_match(f)
+          wait_on_ready(f, half)
+          process_match(f)
         end
       end
     end
@@ -40,7 +40,8 @@ module RconBot
         if line =~ ENTERED_REGEX
           puts "ENTERED"
           @rcon_connection.command("exec warmup.cfg")
-          return :first_warmup
+          @match.status += 1
+          return
         end
       end
     end
@@ -54,18 +55,19 @@ module RconBot
             if line =~ READY_REGEX
               puts "ALL READY"
               @rcon_connection.command("exec live.cfg")
-              return status
+              @match.status += 1
+              return
             end
           end
         end
       rescue => e 
-        @rcon_connection.command("say Rconbot is at your service...")
+        @rcon_connection.command("say RconBot is at your service...")
         @rcon_connection.command("say say ready when ready")
-        # FIXME: can cause a stack level to deep error!!!
+        # # FIXME: can cause a stack level to deep error!!!
         wait_on_ready(f, status)
       end
     end
-
+    
     def process_match(f)
       while true do 
         select([f])
@@ -123,37 +125,30 @@ module RconBot
           end
           
           puts "HALF #{@match.half + 1}, ROUND #{@match.round}, SCORE #{@match.team1} => #{@match.score[@match.half][0]}, #{@match.team2} => #{@match.score[@match.half][1]} #{reason}"
-          
-          if @match.round == @match.half_length
-            @match.switch
-            @rcon_connection.command("exec warmup.cfg")
-            return :second_warmup
-          else
-            if @match.team_score(0) == @match.half_length + 1
-              @match.stop
-              @match.result = 0 # team1 (CT first T second)
-            elsif @match.team_score(1) == @match.half_length + 1
-              @match.stop 
-              @match.result = 1 # team2
-            elsif @match.round == (@match.half_length * 2)
-              @match.stop
-              @match.result = -1 # Draw
-            end
 
-            if @match.result
-              if @match.result == -1
-                puts "RESULT => DRAW" 
-              else
-                puts "RESULT => #{@match.teams[@match.result]}" 
-              end
-              return :finished
+          # new
+          if @match.halftime?
+            @rcon_connection.command("exec warmup.cfg")
+            @match.end_half
+            return
+          else
+            if w = @match.won?  
+              @rcon_connection.command("exec server.cfg")
+              @match.end_match(w)
+              puts "RESULT => #{@match.teams[@match.result]}" 
+              return
+            elsif @match.fulltime?
+              @rcon_connection.command("exec server.cfg")
+              @match.end_match(-1)
+              puts "RESULT => DRAW" 
+              return
             end
           end
           @match.next_round
         end
       end
     end
-
+  
     def log_filename
       '/home/hlds/hlds_screen.log'
     end
