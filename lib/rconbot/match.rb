@@ -1,7 +1,9 @@
 module RconBot
   class Match
-    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :half
+    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :half, :map
     attr_accessor :score, :result, :status, :alive
+
+    STATUS = [:wait_on_join, :first_warmup, :first_half, :second_warmup, :second_half, :finished]
     
     def initialize(team1 = '1', team2 = '2', map = 'dust2')
       @live = false
@@ -11,26 +13,43 @@ module RconBot
       @team1 = team1
       @team2 = team2
       @score = [[0, 0], [0, 0]]
-      # @stats = Stats.new(team1, team2, map)
-      @status = :wait_on_join # :wait_on_join :first_warmup :first_half :second_warmup :second_half :finished
+      @status = 0
       @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
     end
 
-    def switch
+    def current_status
+      STATUS[@status]
+    end
+
+    def end_half
       stop
       @half += 1
-      @status = :second_warmup
+      @status += 1
+    end
+
+    def end_match(result)
+      stop
+      @result = result
+      @status = :finished
+    end
+
+    def halftime?
+      round == @half_length
+    end
+
+    def fulltime?
+      round == (@half_length * 2)
+    end
+
+    def won?
+      return 0 if team_score(0) == @half_length + 1
+      return 1 if team_score(1) == @half_length + 1
+      return false
     end
 
     def teams
       [@team1, @team2]
     end
-    
-    # def half
-    #   return 0 if status == :first_half
-    #   return 1 if status == :second_half
-    #   return nil
-    # end
     
     def start
       @live = true
@@ -55,10 +74,6 @@ module RconBot
 
     def live?
       @live
-    end
-
-    def map
-      @map
     end
 
     def log_filename
