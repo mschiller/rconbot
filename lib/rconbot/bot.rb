@@ -6,37 +6,44 @@ module RconBot
     def connect(host, port, password, options = {})
       options[:team1] ||= 'team1'
       options[:team2] ||= 'team2'
-      options[:maps] ||= ['de_dust2']
+      options[:maps] ||= ['de_dust2', 'de_inferno']
+      options[:repeat] ||= false
       options[:sv_password] ||= rand(100) # to be mailed to captains
       
-      # connect as rcon
       @rcon_connection = RconConnection.new(host, port, password)
-      # set a password
       @rcon_connection.command("sv_password \"#{options[:sv_password]}\"")
 
       # monitor the logs 
       filename = log_filename
-      f = File.open(filename, "r")
-      f.seek(0, IO::SEEK_END)
+      @logfile = File.open(filename, "r")
+      @logfile.seek(0, IO::SEEK_END)
 
       # kick everyone
       # @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
 
-      options[:maps].each do |map|
-        @match = Match.new(options[:team1], options[:team2], map)
-        @rcon_connection.command("changelevel #{map}")
-        wait_on_join(f)
-        [:first_half, :second_half].each do |half|
-          wait_on_ready(f, half)
-          process_match(f)
+      if options[:maps].empty?
+        administer(options[:team1], options[:team2])
+      else
+        options[:maps].each do |map|
+          administer(options[:team1], options[:team2], map)
         end
       end
     end
 
-    def wait_on_join(f)
+    def administer(team1, team2, map = nil)
+      @match = Match.new(team1, team2, map)
+      @rcon_connection.command("changelevel #{map}") if map
+      wait_on_join
+      [:first_half, :second_half].each do |half|
+        wait_on_ready(half)
+        process_match
+      end
+    end
+
+    def wait_on_join
       while true do
-        select([f])
-        line = f.gets
+        select([@logfile])
+        line = @logfile.gets
         if line =~ ENTERED_REGEX
           puts "ENTERED"
           @rcon_connection.command("exec warmup.cfg")
@@ -46,12 +53,12 @@ module RconBot
       end
     end
 
-    def wait_on_ready(f, status)
+    def wait_on_ready(status)
       begin
         Timeout::timeout(5) do
           while true do
-            select([f])
-            line = f.gets
+            select([@logfile])
+            line = @logfile.gets
             if line =~ READY_REGEX
               puts "ALL READY"
               @rcon_connection.command("exec live.cfg")
@@ -64,14 +71,14 @@ module RconBot
         @rcon_connection.command("say RconBot is at your service...")
         @rcon_connection.command("say say ready when ready")
         # # FIXME: can cause a stack level to deep error!!!
-        wait_on_ready(f, status)
+        wait_on_ready(status)
       end
     end
     
-    def process_match(f)
+    def process_match
       while true do 
-        select([f])
-        line = f.gets
+        select([@logfile])
+        line = @logfile.gets
         if m = LIVE_REGEX.match(line) or m = /sv_restart/.match(line)
           puts "LIVE!!!"
           @match.start
