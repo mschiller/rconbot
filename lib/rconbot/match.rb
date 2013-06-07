@@ -9,7 +9,7 @@ module RconBot
       @live = false
       @team_size = 5
       @half = 0
-      @half_length = 2
+      @half_length = 15
       @team1 = team1
       @team2 = team2
       @score = [[0, 0], [0, 0]]
