@@ -30,7 +30,7 @@ module RconBot
     def end_match(result)
       stop
       @result = result
-      @status = :finished
+      @status += 1
     end
 
     def halftime?

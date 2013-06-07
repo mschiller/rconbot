@@ -34,8 +34,8 @@ module RconBot
       @match = Match.new(team1, team2, map)
       @rcon_connection.command("changelevel #{map}") if map
       wait_on_join
-      [:first_half, :second_half].each do |half|
-        wait_on_ready(half)
+      2.times do 
+        wait_on_ready
         process_match
       end
     end
@@ -47,13 +47,12 @@ module RconBot
         if line =~ ENTERED_REGEX
           puts "ENTERED"
           @rcon_connection.command("exec warmup.cfg")
-          @match.status += 1
-          return
+          return @match.status += 1
         end
       end
     end
 
-    def wait_on_ready(status)
+    def wait_on_ready
       begin
         Timeout::timeout(5) do
           while true do
@@ -62,8 +61,7 @@ module RconBot
             if line =~ READY_REGEX
               puts "ALL READY"
               @rcon_connection.command("exec live.cfg")
-              @match.status += 1
-              return
+              return @match.status += 1
             end
           end
         end
@@ -71,7 +69,7 @@ module RconBot
         @rcon_connection.command("say RconBot is at your service...")
         @rcon_connection.command("say say ready when ready")
         # # FIXME: can cause a stack level to deep error!!!
-        wait_on_ready(status)
+        wait_on_ready
       end
     end
     
@@ -136,19 +134,18 @@ module RconBot
           # new
           if @match.halftime?
             @rcon_connection.command("exec warmup.cfg")
-            @match.end_half
-            return
+            return @match.end_half
           else
             if w = @match.won?  
               @rcon_connection.command("exec server.cfg")
-              @match.end_match(w)
               puts "RESULT => #{@match.teams[@match.result]}" 
-              return
+              return @match.end_match(w)
+
+              
             elsif @match.fulltime?
               @rcon_connection.command("exec server.cfg")
-              @match.end_match(-1)
               puts "RESULT => DRAW" 
-              return
+              return @match.end_match(-1)
             end
           end
           @match.next_round
