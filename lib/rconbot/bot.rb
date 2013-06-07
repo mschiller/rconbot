@@ -8,10 +8,10 @@ module RconBot
       options[:team2] ||= 'team2'
       options[:maps] ||= []
       options[:repeat] ||= true
-      options[:sv_password] ||= rand(100) # to be mailed to captains
+      options[:password] ||= rand(100) # to be mailed to captains
       
       @rcon_connection = RconConnection.new(host, port, password)
-      @rcon_connection.command("sv_password \"#{options[:sv_password]}\"")
+      @rcon_connection.command("sv_password \"#{options[:password]}\"")
 
       # monitor the logs 
       filename = log_filename
