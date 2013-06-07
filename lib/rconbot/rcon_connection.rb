@@ -25,6 +25,10 @@ module RconBot
       @socket.connect(@host, @port)
     end
 
+    def disconnect
+      @socket.close
+    end
+
     def socket_request(request)
       puts "=> #{request.inspect}"
       @socket.print(request)

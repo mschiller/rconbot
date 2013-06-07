@@ -6,8 +6,8 @@ module RconBot
     def connect(host, port, password, options = {})
       options[:team1] ||= 'team1'
       options[:team2] ||= 'team2'
-      options[:maps] ||= ['de_dust2', 'de_inferno']
-      options[:repeat] ||= false
+      options[:maps] ||= []
+      options[:repeat] ||= true
       options[:sv_password] ||= rand(100) # to be mailed to captains
       
       @rcon_connection = RconConnection.new(host, port, password)
@@ -21,13 +21,16 @@ module RconBot
       # kick everyone
       # @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
 
-      if options[:maps].empty?
-        administer(options[:team1], options[:team2])
-      else
-        options[:maps].each do |map|
-          administer(options[:team1], options[:team2], map)
+      begin
+        if options[:maps].empty?
+          administer(options[:team1], options[:team2])
+        else
+          options[:maps].each do |map|
+            administer(options[:team1], options[:team2], map)
+          end
         end
-      end
+      end while options[:repeat]
+      @rcon_connection.disconnect
     end
 
     def administer(team1, team2, map = nil)
