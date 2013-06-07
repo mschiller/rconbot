@@ -78,7 +78,10 @@ module RconBot
       while true do 
         select([@logfile])
         line = @logfile.gets
-        if @match.live? and m = KILL_REGEX.match(line)
+        if m = LIVE_REGEX.match(line) or /sv_restart/.match(line) # 2nd condition could be removed but will it catch 100% of the times
+          # flush half time stats because this might happen multiple times in some cases
+          @match.live
+        elsif @match.live? and m = KILL_REGEX.match(line)
           t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
           raise l if k_steam_id == v_steam_id # can happen in suicide
           

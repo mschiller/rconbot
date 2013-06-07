@@ -24,10 +24,14 @@ module RconBot
     end
 
     def start
-      puts "LIVE"
+      puts "STARTED"
       @status += 1
-      @live = true
       next_round
+    end
+
+    def live
+      puts "LIVE"
+      @live = true
     end
 
     def stop
