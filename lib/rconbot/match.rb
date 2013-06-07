@@ -17,8 +17,25 @@ module RconBot
       @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
     end
 
-    def current_status
-      STATUS[@status]
+    def warmup
+      puts "WARMUP"
+      @status += 1
+      @live = false
+    end
+
+    def start
+      puts "LIVE"
+      @status += 1
+      @live = true
+      next_round
+    end
+
+    def stop
+      @live = false
+    end
+    
+    def next_round
+      @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
     end
 
     def end_half
@@ -30,7 +47,12 @@ module RconBot
     def end_match(result)
       stop
       @result = result
+      puts "RESULT => #{(@result == -1 ? "DRAW" : teams[@result])}"
       @status += 1
+    end
+
+    def current_status
+      STATUS[@status]
     end
 
     def halftime?
@@ -49,19 +71,6 @@ module RconBot
 
     def teams
       [@team1, @team2]
-    end
-    
-    def start
-      @live = true
-      next_round
-    end
-    
-    def next_round
-      @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
-    end
-
-    def stop
-      @live = false
     end
     
     def round

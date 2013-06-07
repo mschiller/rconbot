@@ -45,9 +45,8 @@ module RconBot
         select([@logfile])
         line = @logfile.gets
         if line =~ ENTERED_REGEX
-          puts "ENTERED"
           @rcon_connection.command("exec warmup.cfg")
-          return @match.status += 1
+          return @match.warmup
         end
       end
     end
@@ -59,9 +58,8 @@ module RconBot
             select([@logfile])
             line = @logfile.gets
             if line =~ READY_REGEX
-              puts "ALL READY"
               @rcon_connection.command("exec live.cfg")
-              return @match.status += 1
+              return @match.start
             end
           end
         end
@@ -77,10 +75,7 @@ module RconBot
       while true do 
         select([@logfile])
         line = @logfile.gets
-        if m = LIVE_REGEX.match(line) or m = /sv_restart/.match(line)
-          puts "LIVE!!!"
-          @match.start
-        elsif @match.live? and m = KILL_REGEX.match(line)
+        if @match.live? and m = KILL_REGEX.match(line)
           t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
           raise l if k_steam_id == v_steam_id # can happen in suicide
           
@@ -138,13 +133,9 @@ module RconBot
           else
             if w = @match.won?  
               @rcon_connection.command("exec server.cfg")
-              puts "RESULT => #{@match.teams[@match.result]}" 
               return @match.end_match(w)
-
-              
             elsif @match.fulltime?
               @rcon_connection.command("exec server.cfg")
-              puts "RESULT => DRAW" 
               return @match.end_match(-1)
             end
           end
