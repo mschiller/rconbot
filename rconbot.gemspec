@@ -21,7 +21,7 @@ Gem::Specification.new do |spec|
 
   spec.add_runtime_dependency('redis', '>= 3.0.2')
   spec.add_runtime_dependency('json', '>= 1.6.6')
-  spec.add_runtime_dependency('aasm', '>= 3.0.19')
+  spec.add_runtime_dependency('state_machine', '>= 1.2.0')
   spec.add_development_dependency('rake', '>= 10.0.3')
   spec.add_development_dependency('rspec', '>= 2.11.0')
   spec.add_development_dependency('mocha', '>= 0.12.7')

@@ -1,21 +1,25 @@
 module RconBot
   
   class Team
-    include AASM
     attr_reader :name, :score, :players
     
-    aasm do
-      state :not_ready, :initial => true
+    state_machine :initial => :not_ready do
       state :ready
+      state :not_ready
       
-      event :ready do
-        transitions :from => :not_ready, :to => :ready
+      event :is_ready do
+        transition :not_ready => :ready
+      end
+
+      event :is_not_ready do
+        transition :ready => :not_ready
       end
     end
     
-    def initialize(team1)
+    def initialize(name)
       @name = name
       @players = Set.new
+      super()
     end
 
     def add_player(player)

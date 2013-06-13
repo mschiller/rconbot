@@ -2,7 +2,7 @@
 require 'socket'
 require 'timeout'
 require 'set'
-require 'aasm'
+require 'state_machine'
 require 'rconbot'
 require 'rconbot/rcon_connection'
 require 'rconbot/team'
