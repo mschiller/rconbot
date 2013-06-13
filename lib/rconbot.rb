@@ -1,8 +1,11 @@
 # require 'redis'
 require 'socket'
 require 'timeout'
+require 'set'
+require 'aasm'
 require 'rconbot'
 require 'rconbot/rcon_connection'
+require 'rconbot/team'
 require 'rconbot/match'
 require 'rconbot/bot'
 
@@ -24,14 +27,18 @@ module RconBot
   ENTERED_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} entered the game/
 
   JOINED_TEAM_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} joined team \"#{TEAM_FORMAT}\"/
+
+  DISCONNECTED_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} disconnected/
   
-  KILL_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} killed #{PLAYER_FORMAT} with \"([a-z0-9]*)\"$/
+  KILL_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} killed #{PLAYER_FORMAT} with \"([a-z0-9]+)\"$/
   
-  ATTACK_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} attacked #{PLAYER_FORMAT} with \"([a-z0-9]*)\" \(damage \"([0-9]*)\"\) \(damage_armor \"([0-9]*)\"\) \(health \"([0-9]*)\"\) \(armor \"([0-9]*)\"\)$/
+  ATTACK_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} attacked #{PLAYER_FORMAT} with \"([a-z0-9]+)\" \(damage \"([0-9]+)\"\) \(damage_armor \"([0-9]+)\"\) \(health \"([0-9]+)\"\) \(armor \"([0-9]+)\"\)$/
   
-  LIVE_REGEX = /^#{TIMESTAMP_FORMAT} Rcon: \"rcon [0-9]* \".*\" exec live.cfg" from \"[0-9\.:]*\"/
+  LIVE_REGEX = /^#{TIMESTAMP_FORMAT} Rcon: \"rcon [0-9]+ \".*\" exec live.cfg" from \"[0-9\.:]+\"/
   
   ROUNDEND_REGEX = /^#{TIMESTAMP_FORMAT} Team \"#{TEAM_FORMAT}\" triggered \"(Target_Bombed|Target_Saved|Bomb_Defused|CTs_Win|Terrorists_Win)\" \(CT \"([0-9]{1,2})\"\) \(T "([0-9]{1,2})"\)/
+
+  SCORE_REGEX = /^#{TIMESTAMP_FORMAT} Team \"#{TEAM_FORMAT}\" scored \"([0-9]+)\" with \"([0-9]+)\" players/
   
   def self.stats
     puts '*' * 100

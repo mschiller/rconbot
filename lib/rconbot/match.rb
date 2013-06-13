@@ -1,11 +1,52 @@
 module RconBot
-  class Match
-    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :half, :map
-    attr_accessor :score, :result, :status, :alive
 
-    STATUS = [:wait_on_join, :first_warmup, :first_half, :second_warmup, :second_half, :finished]
+  class Match
+    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :half, :map, :rcon_connection
+    attr_accessor :score, :result
+
+    include AASM
     
-    def initialize(team1 = '1', team2 = '2', map = 'dust2')
+    aasm do
+      state :wait_on_join, :initial => true, :before_enter => :change_level
+      state :warm_up
+      state :first_half
+      state :second_half
+      state :finished
+
+      event :warm_up do
+        after do 
+          exec_warmup_cfg
+        end
+        transitions :from => :wait_on_join, :to => :warm_up
+      end
+      
+      event :wait_on_join do
+        after do
+          exec_pub_cfg
+        end
+        transitions :from => :warm_up, :to => :wait_on_join
+      end
+
+      event :live do
+        after do
+          exec_live_cfg
+        end
+        transitions :from => :warm_up, :to => [:first_half, :second_half]
+      end
+
+      event :half_time do
+        after do 
+          exec_warmup_cfg
+        end
+        transitions :from => :first_half, :to => :warm_up
+      end
+
+      event :full_time do
+        transitions :from => :second_half, :to => :finished
+      end
+    end
+    
+    def initialize(team1, team2, map, rcon_connection)
       @live = false
       @team_size = 5
       @half = 0
@@ -13,8 +54,24 @@ module RconBot
       @team1 = team1
       @team2 = team2
       @score = [[0, 0], [0, 0]]
-      @status = 0
+      @rcon_connection = rcon_connection
       @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
+    end
+    
+    def exec_warmup_cfg
+      @rcon_connection.command("exec warmup.cfg")
+    end
+
+    def exec_pub_cfg
+      @rcon_connection.command("exec pub.cfg")
+    end
+
+    def exec_live_cfg
+      @rcon_connection.command("exec live.cfg")
+    end
+    
+    def change_level
+      @rcon_connection.command("changelevel #{@map}") if @map
     end
 
     def warmup

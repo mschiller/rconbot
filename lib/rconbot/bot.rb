@@ -1,7 +1,7 @@
 module RconBot
   class Bot
     attr_accessor :match
-    
+
     # options :team1 :team2 :maps :timelimit
     def connect(host, port, password, options = {})
       options[:team1] ||= 'team1'
@@ -34,54 +34,77 @@ module RconBot
     end
 
     def administer(team1, team2, map = nil)
-      @match = Match.new(team1, team2, map)
-      @rcon_connection.command("changelevel #{map}") if map
+      team1 = Team.new(team1)
+      team2 = Team.new(team2)
+      @match = Match.new(team1, team2, map, @rcon_connection)
       wait_on_join
-      2.times do 
-        wait_on_ready
-        process_match
-      end
     end
 
+    def check_client_connections(line)
+      # check connections disconnections
+      if m = JOINED_TEAM_REGEX.match(line)
+        t, j_name, j_steam_id, from_team, to_team = m.to_a
+        case to_team
+        when 'CT'
+          @match.team1.add_player(j_steam_id)
+        when 'TERRORIST'
+          @match.team2.add_player(j_steam_id)
+        end
+      elsif m = DISCONNECTED_REGEX.match(line)
+        t, d_name, d_steam_id, from_team = m.to_a
+        # reduce player reliability??? or should that be done from wait_on_ready (redis connection is slow)
+        case from_team
+        when 'CT'
+          @match.team1.remove_player(d_steam_id)
+        when 'TERRORIST'
+          @match.team2.remote_player(d_steam_id)
+        end
+      end
+    end
+    
     def wait_on_join
       while true do
         select([@logfile])
         line = @logfile.gets
-        if line =~ ENTERED_REGEX
-          @rcon_connection.command("exec warmup.cfg")
-          return @match.warmup
-        end
+        check_client_connections(line)
+        sleep(1)
+        return warm_up if @match.team1.size == 1 or @match.team2.size == 1
       end
     end
 
-    def wait_on_ready
-      begin
-        Timeout::timeout(5) do
-          while true do
-            select([@logfile])
-            line = @logfile.gets
-            if line =~ READY_REGEX
-              @rcon_connection.command("exec live.cfg")
-              return @match.start
+    def warm_up
+      puts "WU"
+      ttl = 100 # seconds
+      msg_interval = 5
+      (ttl/msg_interval).times do |c|
+        begin
+          Timeout::timeout(msg_interval) do
+            while true do
+              select([@logfile])
+              line = @logfile.gets
+              check_client_connections(line)
+              if line =~ READY_REGEX
+                return live
+              end
             end
           end
+        rescue => e 
+          @rcon_connection.command("say RconBot is at your service...")
+          @rcon_connection.command("say Team1 [C]: #{@match.team1.players.length} players [#{@match.team1.ready? ? 'READY' : 'NOT READY'}]")
+          @rcon_connection.command("say Team2 [T]: #{@match.team2.players.length} players [#{@match.team2.ready? ? 'READY' : 'NOT READY'}]")
+          @rcon_connection.command("say say ready when ready [time left: #{ttl - (c * msg_interval)} seconds]")
         end
-      rescue => e 
-        @rcon_connection.command("say RconBot is at your service...")
-        @rcon_connection.command("say say ready when ready")
-        # # FIXME: can cause a stack level to deep error!!!
-        wait_on_ready
       end
     end
     
-    def process_match
+    def live
       while true do 
         select([@logfile])
         line = @logfile.gets
         if m = LIVE_REGEX.match(line) or /sv_restart/.match(line) # 2nd condition could be removed but will it catch 100% of the times
           # flush half time stats because this might happen multiple times in some cases
-          @match.live
-        elsif @match.live? and m = KILL_REGEX.match(line)
+          @stats = true
+        elsif @stats and m = KILL_REGEX.match(line)
           t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
           raise l if k_steam_id == v_steam_id # can happen in suicide
           
@@ -119,7 +142,7 @@ module RconBot
           #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
           #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
           #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
-        elsif @match.live? and m = ROUNDEND_REGEX.match(line)
+        elsif @stats and m = ROUNDEND_REGEX.match(line)
           t, winner, reason, ct_score, t_score = m.to_a
           
           if @match.half == 0
