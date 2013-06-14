@@ -10,13 +10,13 @@ module RconBot
       state :second_warm_up
       state :second_half
       state :finished
-      
-      event :warm_up do
-        transition :wait_on_join => :first_warm_up #, :second_half => :second_warm_up
-      end
 
       event :run do
         transition any => :wait_on_join
+      end
+
+      event :warm_up do
+        transition :wait_on_join => :first_warm_up 
       end
 
       event :live do
@@ -24,16 +24,38 @@ module RconBot
         transition :second_warm_up => :second_half
       end
 
+      event :halftime do
+        transition :first_half => :second_warm_up
+      end
+
+      event :fulltime do
+        transition :second_half => :finished
+      end
+
       before_transition any => :wait_on_join, :do => :change_level
       after_transition any => :wait_on_join, :do => :wait_for_players
+      
       before_transition :wait_on_join => :first_warm_up, :do => :exec_warmup_cfg
       after_transition :wait_on_join => :first_warm_up, :do => :wait_on_ready
-      after_transition any => :first_warm_up, :do => :first_half, :do => :process_match
-      # before_transition :first_warm_up => :first_half, :second_warm_up => :second_half, :do => :exec_live_cfg
+
+      before_transition :first_half => :second_warm_up, :do => :exec_warmup_cfg
+      after_transition :first_half => :second_warm_up, :do => :wait_on_ready
+      
+      before_transition :first_warm_up => :first_half, :do => :exec_live_cfg
+      after_transition :first_warm_up => :first_half, :do => :process_match
+
+      before_transition :second_warm_up => :second_half, :do => :exec_live_cfg
+      after_transition :second_warm_up => :second_half, :do => :process_match
+
+      before_transition :second_half => :finished, :do => :exec_pub_cfg
+      after_transition :second_half => :finished, :do => :save_stats
+    end
+    
+    def save_stats
+      puts "SAVE_STATS"
     end
     
     def initialize(team1, team2, map, rcon_connection, log_filename)
-      @live = false
       @team_size = 5
       @half = 0
       @half_length = 15
@@ -68,21 +90,6 @@ module RconBot
       @rcon_connection.command("changelevel #{@map}") if @map
     end
 
-    # def start
-    #   puts "STARTED"
-    #   @status += 1
-    #   next_round
-    # end
-
-    # def live
-    #   puts "LIVE"
-    #   @live = true
-    # end
-
-    def stop
-      @live = false
-    end
-    
     def next_round
       @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
     end
@@ -98,10 +105,6 @@ module RconBot
       @result = result
       puts "RESULT => #{(@result == -1 ? "DRAW" : teams[@result])}"
       @status += 1
-    end
-
-    def current_status
-      STATUS[@status]
     end
 
     def halftime?
@@ -130,23 +133,18 @@ module RconBot
       @score[0][team] + @score[1][team]
     end
 
-    def live?
-      @live
-    end
-
     def wait_for_players
       puts "WAIT_FOR_PLAYERS"
       while true do
         select([@logfile])
         line = @logfile.gets
         check_client_connections(line)
-        sleep(1);puts "#{state}"
-        return warm_up if @team1.size == 1 or @team2.size == 1
+        return if @team1.size == 1 or @team2.size == 1
       end
     end
 
     def wait_on_ready
-      puts "WARM_UP"
+      puts "WAIT_ON_READY"
       ttl = 100 # seconds
       msg_interval = 5 # seconds
       (ttl/msg_interval).times do |c|
@@ -156,15 +154,12 @@ module RconBot
               select([@logfile])
               line = @logfile.gets
               check_client_connections(line)
-              sleep(1);puts "#{state}"
               # should the next one be some kinda elsif because of overhead
               if m = READY_REGEX.match(line)
                 t, r_name, r_steam_id, r_team = m.to_a
                 set_ready_state(r_team)
                 puts "---------- R #{@team1.ready?} #{@team2.ready?}"
-                if @team1.ready? or @team2.ready?
-                  return live
-                end
+                return if @team1.ready? or @team2.ready?
               end
             end
           end
@@ -178,80 +173,81 @@ module RconBot
     end
 
     def process_match
-      puts "LIVE"
+      puts "PROCESS_MATCH"
       while true do 
         select([@logfile])
         line = @logfile.gets
-        # if m = LIVE_REGEX.match(line) or /sv_restart/.match(line) # 2nd condition could be removed but will it catch 100% of the times
-        #   # flush half time stats because this might happen multiple times in some cases
-        #   @stats = true
-        # elsif @stats and m = KILL_REGEX.match(line)
-        #   t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
-        #   raise l if k_steam_id == v_steam_id # can happen in suicide
+        if m = LIVE_REGEX.match(line) or /sv_restart/.match(line) # 2nd condition could be removed but will it catch 100% of the times
+          # flush half time stats because this might happen multiple times in some cases
+          @stats = true
+        elsif @stats and m = KILL_REGEX.match(line)
+          t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
+          raise l if k_steam_id == v_steam_id # can happen in suicide
           
-        #   @alive[v_team] -= 1
+          @alive[v_team] -= 1
             
-        #   # add aliases in case of change
-        #   # $redis.zincrby("alias:#{k_steam_id}", 1, k_name)
-        #   # $redis.zincrby("alias:#{v_steam_id}", 1, v_name)
+          # add aliases in case of change
+          # $redis.zincrby("alias:#{k_steam_id}", 1, k_name)
+          # $redis.zincrby("alias:#{v_steam_id}", 1, v_name)
           
-        #   # kills
-        #   #k = $redis.incr("kills:#{k_steam_id}") #unless k_team == v_team # friendly fire
-        #   # deaths
-        #   #d = $redis.incr("deaths:#{v_steam_id}") #unless
+          # kills
+          #k = $redis.incr("kills:#{k_steam_id}") #unless k_team == v_team # friendly fire
+          # deaths
+          #d = $redis.incr("deaths:#{v_steam_id}") #unless
           
-        #   # points for killer
-        #   points = ((@team_size - @alive[k_team]) + (@team_size - @alive[v_team]))
-        #   points = 0 if k_team == v_team # friendly fire
+          # points for killer
+          points = ((@team_size - @alive[k_team]) + (@team_size - @alive[v_team]))
+          points = 0 if k_team == v_team # friendly fire
           
-        #   case k_team
-        #   when 'CT'
-        #     # $redis.zincrby("skill.ct", points, k_steam_id)
-        #   when 'TERRORIST'
-        #     # $redis.zincrby("skill.t", points, k_steam_id)
-        #   end
+          case k_team
+          when 'CT'
+            # $redis.zincrby("skill.ct", points, k_steam_id)
+          when 'TERRORIST'
+            # $redis.zincrby("skill.t", points, k_steam_id)
+          end
           
-        #   puts " -- #{k_name[0..4]} (#{k_team[0]}) killed #{v_name[0..4]} (#{v_team[0]}) with #{weapon} -- #{points} #{'wtf' if k_team == v_team} #{@alive.inspect}"
+          puts " -- #{k_name[0..4]} (#{k_team[0]}) killed #{v_name[0..4]} (#{v_team[0]}) with #{weapon} -- #{points} #{'wtf' if k_team == v_team} #{@alive.inspect}"
             
-        #   # $redis.zincrby("skill.#{weapon}", points, k_steam_id)
-        #   # $redis.zincrby("weapon.usage", 1, weapon)
+          # $redis.zincrby("skill.#{weapon}", points, k_steam_id)
+          # $redis.zincrby("weapon.usage", 1, weapon)
           
-        #   # PROBABLY BAD TECHNIQUE : update the score in (currently updating the ratio only)
-        #   # $redis.zadd("ratio", k.to_f/# $redis.get("deaths:#{k_steam_id}").to_f, k_steam_id)
-        #   # $redis.zadd("ratio", # $redis.get("kills:#{v_steam_id}").to_f/d.to_f, v_steam_id)
-        #   # elsif $live and m = ATTACK_REGEX.match(line)
-        #   #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
-        #   #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
-        #   #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
-        # elsif @stats and m = ROUNDEND_REGEX.match(line)
-        #   t, winner, reason, ct_score, t_score = m.to_a
+          # PROBABLY BAD TECHNIQUE : update the score in (currently updating the ratio only)
+          # $redis.zadd("ratio", k.to_f/# $redis.get("deaths:#{k_steam_id}").to_f, k_steam_id)
+          # $redis.zadd("ratio", # $redis.get("kills:#{v_steam_id}").to_f/d.to_f, v_steam_id)
+          # elsif $live and m = ATTACK_REGEX.match(line)
+          #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
+          #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
+          #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
+        elsif @stats and m = ROUNDEND_REGEX.match(line)
+          t, winner, reason, ct_score, t_score = m.to_a
           
-        #   if @half == 0
-        #     @score[@half][0] = ct_score.to_i
-        #     @score[@half][1] = t_score.to_i
-        #   elsif @half == 1
-        #     @score[@half][1] = ct_score.to_i
-        #     @score[@half][0] = t_score.to_i
-        #   end
+          if @half == 0
+            @score[@half][0] = ct_score.to_i
+            @score[@half][1] = t_score.to_i
+          elsif @half == 1
+            @score[@half][1] = ct_score.to_i
+            @score[@half][0] = t_score.to_i
+          end
           
-        #   puts "HALF #{@half + 1}, ROUND #{@round}, SCORE #{@team1} => #{@score[@half][0]}, #{@team2} => #{@score[@half][1]} #{reason}"
+          puts "HALF #{@half + 1}, ROUND #{@round}, SCORE #{@team1} => #{@score[@half][0]}, #{@team2} => #{@score[@half][1]} #{reason}"
 
-        #   # new
-        #   if @halftime?
-        #     @rcon_connection.command("exec warmup.cfg")
-        #     return end_half
-        #   else
-        #     if w = @won?  
-        #       @rcon_connection.command("exec server.cfg")
-        #       return end_match(w)
-        #     elsif @fulltime?
-        #       @rcon_connection.command("exec server.cfg")
-        #       return end_match(-1)
-        #     end
-        #   end
-        #   @next_round
-        # end
+          # new
+          if halftime?
+            @rcon_connection.command("exec warmup.cfg")
+            return end_half
+          else
+            if w = won?  
+              @rcon_connection.command("exec server.cfg")
+              return end_match(w)
+            elsif fulltime?
+              @rcon_connection.command("exec server.cfg")
+              return end_match(-1)
+            end
+          end
+          @next_round
+        end
       end
+      puts "EXITING PROCESS_MATCH"
     end
 
     def set_ready_state(team)

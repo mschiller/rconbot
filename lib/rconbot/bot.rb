@@ -33,6 +33,11 @@ module RconBot
       team2 = Team.new(team2)
       @match = Match.new(team1, team2, map, @rcon_connection, log_filename)
       @match.run
+      @match.warm_up
+      @match.live
+      @match.halftime
+      @match.live
+      @match.fulltime
     end
 
     def log_filename
