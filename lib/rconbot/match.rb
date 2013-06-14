@@ -4,22 +4,32 @@ module RconBot
     attr_accessor :score, :result
     
     state_machine :initial => :wait_on_join do
+      state :wait_on_join
       state :first_warm_up
       state :first_half
       state :second_warm_up
       state :second_half
       state :finished
       
-      before_transition any - :wait_on_join => :wait_on_join, :do => :change_level
+      event :warm_up do
+        transition :wait_on_join => :first_warm_up #, :second_half => :second_warm_up
+      end
+
+      event :run do
+        transition any => :wait_on_join
+      end
+
+      event :live do
+        transition :first_warm_up => :first_half
+        transition :second_warm_up => :second_half
+      end
+
+      before_transition any => :wait_on_join, :do => :change_level
+      after_transition any => :wait_on_join, :do => :wait_for_players
       before_transition :wait_on_join => :first_warm_up, :do => :exec_warmup_cfg
-      
-      event :wait_for_players do
-        transition :connected => :wait_on_join
-      end
-      event :first_warm_up do
-        transition :wait_on_join => :first_warm_up, :second_half => :second_warm_up
-      end
-      before_transition :first_warm_up => :first_half, :second_warm_up => :second_half, :do => :exec_live_cfg
+      after_transition :wait_on_join => :first_warm_up, :do => :wait_on_ready
+      after_transition any => :first_warm_up, :do => :first_half, :do => :process_match
+      # before_transition :first_warm_up => :first_half, :second_warm_up => :second_half, :do => :exec_live_cfg
     end
     
     def initialize(team1, team2, map, rcon_connection, log_filename)
@@ -58,11 +68,11 @@ module RconBot
       @rcon_connection.command("changelevel #{@map}") if @map
     end
 
-    def start
-      puts "STARTED"
-      @status += 1
-      next_round
-    end
+    # def start
+    #   puts "STARTED"
+    #   @status += 1
+    #   next_round
+    # end
 
     # def live
     #   puts "LIVE"
@@ -124,19 +134,18 @@ module RconBot
       @live
     end
 
-    def wait_on_join
+    def wait_for_players
       puts "WAIT_FOR_PLAYERS"
       while true do
         select([@logfile])
         line = @logfile.gets
         check_client_connections(line)
-        # sleep(1);puts "#{state}"
-        return first_warm_up if @team1.size == 1 or @team2.size == 1
+        sleep(1);puts "#{state}"
+        return warm_up if @team1.size == 1 or @team2.size == 1
       end
-      
     end
 
-    def warm_up
+    def wait_on_ready
       puts "WARM_UP"
       ttl = 100 # seconds
       msg_interval = 5 # seconds
@@ -147,13 +156,14 @@ module RconBot
               select([@logfile])
               line = @logfile.gets
               check_client_connections(line)
+              sleep(1);puts "#{state}"
               # should the next one be some kinda elsif because of overhead
               if m = READY_REGEX.match(line)
                 t, r_name, r_steam_id, r_team = m.to_a
                 set_ready_state(r_team)
                 puts "---------- R #{@team1.ready?} #{@team2.ready?}"
                 if @team1.ready? or @team2.ready?
-                  return first_half if first_warm_up
+                  return live
                 end
               end
             end
@@ -167,7 +177,7 @@ module RconBot
       end
     end
 
-    def live
+    def process_match
       puts "LIVE"
       while true do 
         select([@logfile])
@@ -245,7 +255,7 @@ module RconBot
     end
 
     def set_ready_state(team)
-      puts "SRS #{team} #{first_warm_up?} #{second_warm_up?}"
+      puts "SRS #{team} #{state}"
       @team1.is_ready if (first_warm_up? and team == 'CT') or (second_warm_up? and team == 'TERRORIST')
       @team2.is_ready if (first_warm_up? and team == 'TERRORIST') or (second_warm_up? and team == 'CT')
       puts @team1.ready?
