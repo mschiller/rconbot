@@ -1,7 +1,8 @@
 module RconBot
   
   class Team
-    attr_reader :name, :score, :players, :dead_players
+    attr_reader :name, :players, :dead_players
+    attr_accessor :score
     
     state_machine :initial => :not_ready do
       state :ready

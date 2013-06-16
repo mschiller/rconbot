@@ -292,7 +292,7 @@ module RconBot
         when 'CT'
           @team1.remove_player(d_steam_id)
         when 'TERRORIST'
-          @team2.remote_player(d_steam_id)
+          @team2.remove_player(d_steam_id)
         end
       end
     end
