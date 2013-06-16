@@ -107,6 +107,11 @@ module RconBot
       @status += 1
     end
 
+    # def half
+    #   return 1 if first_half?
+    #   return 2 if second_half?
+    # end
+
     def halftime?
       round == @half_length
     end
@@ -184,7 +189,7 @@ module RconBot
           t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
           raise l if k_steam_id == v_steam_id # can happen in suicide
           
-          @alive[v_team] -= 1
+          self.send(v_team.downcase).kill_player(v_steam_id)
             
           # add aliases in case of change
           # $redis.zincrby("alias:#{k_steam_id}", 1, k_name)
@@ -220,34 +225,46 @@ module RconBot
           #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
         elsif @stats and m = ROUNDEND_REGEX.match(line)
           t, winner, reason, ct_score, t_score = m.to_a
+
+          # update score
+          ct.score = ct_score.to_i
+          terrorist.score = t_score.to_i
+
+          # if @half == 0
+          #   @score[@half][0] = ct_score.to_i
+          #   @score[@half][1] = t_score.to_i
+          # elsif @half == 1
+          #   @score[@half][1] = ct_score.to_i
+          #   @score[@half][0] = t_score.to_i
+          # end
           
-          if @half == 0
-            @score[@half][0] = ct_score.to_i
-            @score[@half][1] = t_score.to_i
-          elsif @half == 1
-            @score[@half][1] = ct_score.to_i
-            @score[@half][0] = t_score.to_i
-          end
-          
-          puts "HALF #{@half + 1}, ROUND #{@round}, SCORE #{@team1} => #{@score[@half][0]}, #{@team2} => #{@score[@half][1]} #{reason}"
+          puts "HALF => #{@half + 1}, ROUND => #{@round}, SCORE => #{@team1.score}:#{@team2.score} [#{reason}]"
 
           # new
-          if halftime?
-            @rcon_connection.command("exec warmup.cfg")
-            return end_half
-          else
+          return if halftime?
+          if second_half?
             if w = won?  
-              @rcon_connection.command("exec server.cfg")
-              return end_match(w)
+              return w
             elsif fulltime?
-              @rcon_connection.command("exec server.cfg")
-              return end_match(-1)
+              return
             end
           end
-          @next_round
+          next_round
         end
       end
       puts "EXITING PROCESS_MATCH"
+    end
+
+    def ct
+      return @team1 if first_half? 
+      return @team2 if second_half? 
+      return nil
+    end
+
+    def terrorist
+      return @team2 if first_half? 
+      return @team1 if second_half? 
+      return nil
     end
 
     def set_ready_state(team)

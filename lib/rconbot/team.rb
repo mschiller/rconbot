@@ -1,7 +1,7 @@
 module RconBot
   
   class Team
-    attr_reader :name, :score, :players
+    attr_reader :name, :score, :players, :dead_players
     
     state_machine :initial => :not_ready do
       state :ready
@@ -19,6 +19,7 @@ module RconBot
     def initialize(name)
       @name = name
       @players = Set.new
+      @dead_players = Set.new
       super()
     end
 
@@ -33,10 +34,19 @@ module RconBot
     def size
       @players.length
     end
-    
+
     def won?
       
     end
+
+    def respawn
+      @dead_players = Set.new
+    end
+
+    def kill_player(player)
+      @dead_players.add(player)
+    end
+
     
   end
 
