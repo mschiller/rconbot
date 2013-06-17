@@ -1,7 +1,7 @@
 module RconBot
   class Match
-    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :half, :map, :rcon_connection
-    attr_accessor :score, :result
+    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :map, :rcon_connection, :result
+    attr_accessor :score
     
     state_machine :initial => :wait_on_join do
       state :wait_on_join
@@ -53,6 +53,9 @@ module RconBot
     
     def save_stats
       puts "SAVE_STATS"
+      puts "ROUNDS COMPLETED => #{round}"
+      puts "WINNER => #{@result.inspect}"
+      puts "STATS => #{@stats.inspect}"
     end
     
     def initialize(team1, team2, map, rcon_connection, log_filename)
@@ -91,26 +94,9 @@ module RconBot
     end
 
     def next_round
-      @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
+      team1.respawn
+      team2.respawn
     end
-
-    def end_half
-      stop
-      @half += 1
-      @status += 1
-    end
-
-    def end_match(result)
-      stop
-      @result = result
-      puts "RESULT => #{(@result == -1 ? "DRAW" : teams[@result])}"
-      @status += 1
-    end
-
-    # def half
-    #   return 1 if first_half?
-    #   return 2 if second_half?
-    # end
 
     def halftime?
       round == @half_length
@@ -121,21 +107,13 @@ module RconBot
     end
 
     def won?
-      return 0 if team_score(0) == @half_length + 1
-      return 1 if team_score(1) == @half_length + 1
+      return team1 if team1.score == @half_length + 1
+      return team2 if team2.score == @half_length + 1
       return false
     end
 
-    def teams
-      [@team1, @team2]
-    end
-    
     def round
-      @score.flatten.inject(0){|s, i| s += i; s}
-    end
-
-    def team_score(team)
-      @score[0][team] + @score[1][team]
+      team1.score + team2.score
     end
 
     def wait_for_players
@@ -144,7 +122,7 @@ module RconBot
         select([@logfile])
         line = @logfile.gets
         check_client_connections(line)
-        return if @team1.size == 1 or @team2.size == 1
+        return if @team1.size == 1 or @team2.size == 1 # should be 5 and 5
       end
     end
 
@@ -154,7 +132,7 @@ module RconBot
       msg_interval = 5 # seconds
       (ttl/msg_interval).times do |c|
         begin
-          Timeout::timeout(msg_interval) do
+          Timeout::timeout(0 || msg_interval) do
             while true do
               select([@logfile])
               line = @logfile.gets
@@ -234,17 +212,23 @@ module RconBot
         elsif @stats and m = ROUNDEND_REGEX.match(line)
           t, winner, reason, ct_score, t_score = m.to_a
 
-          # update score
-          ct.score = ct_score.to_i
-          terrorist.score = t_score.to_i
-
-          puts "HALF => #{@half + 1}, ROUND => #{@round}, SCORE => #{@team1.score}:#{@team2.score} [#{reason}]"
-
-          # new
+          if first_half?
+            puts "FH"
+            ct.first_half_score = ct_score.to_i
+            terrorist.first_half_score = t_score.to_i
+          elsif second_half?
+            puts "SH"
+            ct.second_half_score = ct_score.to_i
+            terrorist.second_half_score = t_score.to_i
+          end
+          
+          puts "HALF => #{@half + 1}, ROUND => #{round}, MATCH ROUND => #{round}, SCORE => #{@team1.score}:#{@team2.score} [#{reason}]"
+          
           return if halftime?
           if second_half?
             if w = won?
-              return w
+              @result = w
+              return 
             elsif fulltime?
               return
             end
