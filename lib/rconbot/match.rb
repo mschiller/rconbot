@@ -184,32 +184,40 @@ module RconBot
         line = @logfile.gets
         if m = LIVE_REGEX.match(line) or /sv_restart/.match(line) # 2nd condition could be removed but will it catch 100% of the times
           # flush half time stats because this might happen multiple times in some cases
-          @stats = true
+          @stats = Stats.new(@team1, @team2)
         elsif @stats and m = KILL_REGEX.match(line)
           t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
-          raise l if k_steam_id == v_steam_id # can happen in suicide
+
+          _k_team = self.send(k_team.downcase)
+          _v_team = self.send(v_team.downcase)
+
+          raise line if k_steam_id == v_steam_id # can happen in suicide
           
-          self.send(v_team.downcase).kill_player(v_steam_id)
+          _v_team.player_died(v_steam_id)
             
           # add aliases in case of change
+          @stats.alias[k_steam_id][k_name] +=1
+          
           # $redis.zincrby("alias:#{k_steam_id}", 1, k_name)
           # $redis.zincrby("alias:#{v_steam_id}", 1, v_name)
           
           # kills
+          @stats.player[k_steam_id][:kills] += 1 unless k_team == v_team
           #k = $redis.incr("kills:#{k_steam_id}") #unless k_team == v_team # friendly fire
           # deaths
+          @stats.player[v_steam_id][:deaths] += 1
           #d = $redis.incr("deaths:#{v_steam_id}") #unless
           
           # points for killer
-          points = ((@team_size - @alive[k_team]) + (@team_size - @alive[v_team]))
-          points = 0 if k_team == v_team # friendly fire
-          
-          case k_team
-          when 'CT'
-            # $redis.zincrby("skill.ct", points, k_steam_id)
-          when 'TERRORIST'
-            # $redis.zincrby("skill.t", points, k_steam_id)
-          end
+          points = (k_team == v_team ? 0 : ((@team_size - _k_team.alive_count) + (@team_size - _v_team.alive_count)))
+          @stats.player[:points][k_team] += points
+
+          # case k_team
+          # when 'CT'
+          #   # $redis.zincrby("skill.ct", points, k_steam_id)
+          # when 'TERRORIST'
+          #   # $redis.zincrby("skill.t", points, k_steam_id)
+          # end
           
           puts " -- #{k_name[0..4]} (#{k_team[0]}) killed #{v_name[0..4]} (#{v_team[0]}) with #{weapon} -- #{points} #{'wtf' if k_team == v_team} #{@alive.inspect}"
             
@@ -230,20 +238,12 @@ module RconBot
           ct.score = ct_score.to_i
           terrorist.score = t_score.to_i
 
-          # if @half == 0
-          #   @score[@half][0] = ct_score.to_i
-          #   @score[@half][1] = t_score.to_i
-          # elsif @half == 1
-          #   @score[@half][1] = ct_score.to_i
-          #   @score[@half][0] = t_score.to_i
-          # end
-          
           puts "HALF => #{@half + 1}, ROUND => #{@round}, SCORE => #{@team1.score}:#{@team2.score} [#{reason}]"
 
           # new
           return if halftime?
           if second_half?
-            if w = won?  
+            if w = won?
               return w
             elsif fulltime?
               return

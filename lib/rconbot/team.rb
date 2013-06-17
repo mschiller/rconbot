@@ -33,7 +33,7 @@ module RconBot
     end
 
     def size
-      @players.length
+      @players.size
     end
 
     def won?
@@ -44,10 +44,17 @@ module RconBot
       @dead_players = Set.new
     end
 
-    def kill_player(player)
+    def player_died(player)
       @dead_players.add(player)
     end
 
+    def alive_count
+      (@players - @dead_players).size
+    end
+    
+    def dead_count
+      @dead_players.size
+    end
     
   end
 
