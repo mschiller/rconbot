@@ -1,7 +1,6 @@
 module RconBot
   class Match
-    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :map, :rcon_connection, :result
-    attr_accessor :score
+    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :map, :rcon_connection, :result, :spectator
     
     state_machine :initial => :wait_on_join do
       state :wait_on_join
@@ -64,12 +63,11 @@ module RconBot
       @half_length = 15
       @team1 = team1
       @team2 = team2
-      @score = [[0, 0], [0, 0]]
+      @spectator = Team.new('SPECTATOR') # this is not right!
       @rcon_connection = rcon_connection
       # monitor the logs 
       @logfile = File.open(log_filename, "r")
       @logfile.seek(0, IO::SEEK_END)
-      @alive = {'CT' => @team_size, 'TERRORIST' => @team_size}
       super()
     end
     
@@ -132,7 +130,7 @@ module RconBot
       msg_interval = 5 # seconds
       (ttl/msg_interval).times do |c|
         begin
-          Timeout::timeout(0 || msg_interval) do
+          Timeout::timeout(msg_interval) do
             while true do
               select([@logfile])
               line = @logfile.gets
@@ -140,9 +138,13 @@ module RconBot
               # should the next one be some kinda elsif because of overhead
               if m = READY_REGEX.match(line)
                 t, r_name, r_steam_id, r_team = m.to_a
-                set_ready_state(r_team)
+                set_ready_state(r_team, true)
                 puts "---------- R #{@team1.ready?} #{@team2.ready?}"
-                return if @team1.ready? or @team2.ready?
+                return if @team1.ready? and @team2.ready?
+              elsif m = NOT_READY_REGEX.match(line)
+                t, r_name, r_steam_id, r_team = m.to_a
+                set_ready_state(r_team, false)
+                puts "---------- R #{@team1.ready?} #{@team2.ready?}"
               end
             end
           end
@@ -164,14 +166,14 @@ module RconBot
           # flush half time stats because this might happen multiple times in some cases
           @stats = Stats.new(@team1, @team2)
         elsif @stats and m = KILL_REGEX.match(line)
-          t, k_name, k_steam_id, k_team, v_name, v_steam_id, v_team, weapon = m.to_a
+          t, k_name, k_steam_id, k_team_type, v_name, v_steam_id, v_team_type, weapon = m.to_a
 
-          _k_team = self.send(k_team.downcase)
-          _v_team = self.send(v_team.downcase)
+          k_team = self.send(k_team_type.downcase)
+          v_team = self.send(v_team_type.downcase)
 
           raise line if k_steam_id == v_steam_id # can happen in suicide
           
-          _v_team.player_died(v_steam_id)
+          v_team.player_died(v_steam_id)
             
           # add aliases in case of change
           @stats.alias[k_steam_id][k_name] +=1
@@ -180,15 +182,15 @@ module RconBot
           # $redis.zincrby("alias:#{v_steam_id}", 1, v_name)
           
           # kills
-          @stats.player[k_steam_id][:kills] += 1 unless k_team == v_team
+          @stats.player[k_steam_id][:kills] += 1 unless k_team_type == v_team_type
           #k = $redis.incr("kills:#{k_steam_id}") #unless k_team == v_team # friendly fire
           # deaths
           @stats.player[v_steam_id][:deaths] += 1
           #d = $redis.incr("deaths:#{v_steam_id}") #unless
           
           # points for killer
-          points = (k_team == v_team ? 0 : ((@team_size - _k_team.alive_count) + (@team_size - _v_team.alive_count)))
-          @stats.player[:points][k_team] += points
+          points = (k_team_type == v_team_type ? 0 : ((@team_size - k_team.alive_count) + (@team_size - v_team.alive_count)))
+          @stats.player[:points][k_team_type] += points
 
           # case k_team
           # when 'CT'
@@ -197,7 +199,7 @@ module RconBot
           #   # $redis.zincrby("skill.t", points, k_steam_id)
           # end
           
-          puts " -- #{k_name[0..4]} (#{k_team[0]}) killed #{v_name[0..4]} (#{v_team[0]}) with #{weapon} -- #{points} #{'wtf' if k_team == v_team} #{@alive.inspect}"
+          puts " -- #{k_name[0..4]} (#{k_team_type[0]}) killed #{v_name[0..4]} (#{v_team_type[0]}) with #{weapon} -- #{points} #{'wtf' if k_team_type == v_team_type} #{@alive.inspect}"
             
           # $redis.zincrby("skill.#{weapon}", points, k_steam_id)
           # $redis.zincrby("weapon.usage", 1, weapon)
@@ -210,17 +212,18 @@ module RconBot
           #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
           #   puts " -- -- #{a_name[0..4]} -> #{t_name[0..4]} => #{health}"
         elsif @stats and m = ROUNDEND_REGEX.match(line)
-          t, winner, reason, ct_score, t_score = m.to_a
+          t, winner, reason, ct_score, terrorist_score = m.to_a
 
-          if first_half?
-            puts "FH"
-            ct.first_half_score = ct_score.to_i
-            terrorist.first_half_score = t_score.to_i
-          elsif second_half?
-            puts "SH"
-            ct.second_half_score = ct_score.to_i
-            terrorist.second_half_score = t_score.to_i
-          end
+          ct.send("#{state}_score=", ct_score.to_i)
+          terrorist.send("#{state}_score=", terrorist_score.to_i)
+
+          # if first_half?
+          #   ct.first_half_score = ct_score.to_i
+          #   terrorist.first_half_score = terrorist_score.to_i
+          # elsif second_half?
+          #   ct.second_half_score = ct_score.to_i
+          #   terrorist.second_half_score = terrorist_score.to_i
+          # end
           
           puts "HALF => #{@half + 1}, ROUND => #{round}, MATCH ROUND => #{round}, SCORE => #{@team1.score}:#{@team2.score} [#{reason}]"
           
@@ -240,44 +243,43 @@ module RconBot
     end
 
     def ct
-      return @team1 if first_half? 
-      return @team2 if second_half? 
+      return @team1 if first_half? or first_warm_up? or wait_on_join?
+      return @team2 if second_half? or second_warm_up?
       return nil
     end
 
     def terrorist
-      return @team2 if first_half? 
-      return @team1 if second_half? 
+      return @team2 if first_half? or first_warm_up? or wait_on_join?
+      return @team1 if second_half? or second_warm_up?
       return nil
     end
 
-    def set_ready_state(team)
-      puts "SRS #{team} #{state}"
-      @team1.is_ready if (first_warm_up? and team == 'CT') or (second_warm_up? and team == 'TERRORIST')
-      @team2.is_ready if (first_warm_up? and team == 'TERRORIST') or (second_warm_up? and team == 'CT')
-      puts @team1.ready?
-      puts @team2.ready?
+    def set_ready_state(team_type, value)
+      puts "SET_READY_STATE #{team_type} -> READY = #{value} #{state}"
+      team = self.send(team_type.downcase)
+      value ? team.is_ready : team.is_not_ready
     end
 
     def check_client_connections(line)
       # check connections disconnections
       if m = JOINED_TEAM_REGEX.match(line)
-        t, j_name, j_steam_id, from_team, to_team = m.to_a
-        case to_team
-        when 'CT'
-          @team1.add_player(j_steam_id)
-        when 'TERRORIST'
-          @team2.add_player(j_steam_id)
+        t, j_name, j_steam_id, from_team_type, to_team_type = m.to_a
+        if from_team_type
+          from_team = self.send(from_team_type.downcase)
+          from_team.is_not_ready
+          from_team.remove_player(j_steam_id)
         end
+        puts to_team_type.inspect
+        to_team = self.send(to_team_type.downcase)
+        puts to_team.inspect
+        to_team.is_not_ready
+        to_team.add_player(j_steam_id)
       elsif m = DISCONNECTED_REGEX.match(line)
         t, d_name, d_steam_id, from_team = m.to_a
         # reduce player reliability??? or should that be done from wait_on_ready (redis connection is slow)
-        case from_team
-        when 'CT'
-          @team1.remove_player(d_steam_id)
-        when 'TERRORIST'
-          @team2.remove_player(d_steam_id)
-        end
+        from_team = self.send(from_team_type)
+        from_team.is_not_ready
+        from_team.remove_player(d_steam_id)
       end
     end
 

@@ -22,6 +22,8 @@ module RconBot
   PLAYER_FORMAT = "\"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><#{TEAM_FORMAT}?>\""
   
   READY_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} say \"ready\"/
+
+  NOT_READY_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} say \"not ready\"/
   
   CONNECTED_REGEX = /^#{TIMESTAMP_FORMAT} #{PLAYER_FORMAT} connected/
 
