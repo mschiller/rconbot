@@ -31,17 +31,27 @@ module RconBot
     def administer(team1, team2, map = nil)
       team1 = Team.new(team1)
       team2 = Team.new(team2)
+      ttl = 1 * 60 # max 10 minutes for warmup
       @match = Match.new(team1, team2, map, @rcon_connection, log_filename)
-      @match.run
-      @match.warm_up
-      @match.live
-      @match.halftime
-      @match.live
-      @match.fulltime
+
+      begin 
+        Timeout::timeout(ttl) do 
+          @match.run
+        end
+        @match.warm_up
+        @match.start
+        Timeout::timeout(ttl) do
+          @match.halftime
+        end
+        @match.start
+        @match.fulltime
+      rescue Timeout::Error
+        @rcon_connection.command("say Match time expired, map will change...")
+      end
     end
 
     def log_filename
-      '/home/hlds/hlds_screen.log'
+      '/home/hlds/hlds_match_screen.log'
     end
   end
 end

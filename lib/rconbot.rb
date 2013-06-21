@@ -17,7 +17,7 @@ module RconBot
 
   TIMESTAMP_FORMAT = "L 0?[0-9]\/[0-9]{2}\/[0-9]{4} - [0-9]{2}:[0-9]{2}:[0-9]{2}:"
   
-  TEAM_FORMAT = "(CT|TERRORIST)"  
+  TEAM_FORMAT = "(CT|TERRORIST|SPECTATOR)"  
 
   PLAYER_FORMAT = "\"(.+)<[0-9]+><(STEAM_[0-5]:[0-1]:[0-9]+)><#{TEAM_FORMAT}?>\""
   
