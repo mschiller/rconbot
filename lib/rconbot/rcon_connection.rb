@@ -36,7 +36,7 @@ module RconBot
       loop do 
         select([@socket], nil, nil, 10)
         str = @socket.recv(65507)
-        puts "<= #{str.inspect}"
+        #puts "<= #{str.inspect}"
         bytes = str.unpack("c*")
         retval += bytes
         break

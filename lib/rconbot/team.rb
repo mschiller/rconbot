@@ -1,8 +1,8 @@
 module RconBot
   
   class Team
-    attr_reader :name, :players, :dead_players, :score
-    attr_accessor :first_half_score, :second_half_score
+    attr_reader :name, :dead_players, :score
+    attr_accessor :first_half_score, :second_half_score, :players
     
     state_machine :initial => :not_ready do
       state :ready
@@ -20,6 +20,7 @@ module RconBot
     def initialize(name)
       @name = name
       @players = Set.new
+      @all_players = Set.new
       @dead_players = Set.new
       @first_half_score = 0
       @second_half_score = 0
@@ -28,6 +29,7 @@ module RconBot
 
     def add_player(player)
       @players.add(player)
+      @all_players.add(player)
     end
 
     def remove_player(player)

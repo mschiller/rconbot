@@ -1,6 +1,13 @@
 module RconBot
+  # ELO System
+  
+  WEAPON_COST = {'ak47' => 2, 'm4a1' => 2, 'usp' => 4, 'glock' => '5', 'deagle' => 3, 'famas' => 3, 'galil' => 3, 'awp' => 1}
+  
+  require 'redis'
+  $redis_connection = Redis.new(:db => 1)
+
   class Match
-    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :map, :rcon_connection, :result
+    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :aliases, :map, :rcon_connection, :result
     attr_accessor :spectator, :live
     
     state_machine :initial => :wait_on_join do
@@ -15,16 +22,21 @@ module RconBot
         transition any => :wait_on_join
       end
 
-      event :warm_up do
+      event :warm_up_1 do
         transition :wait_on_join => :first_warm_up 
       end
 
       event :start do
+        # active mode (with warmup time)
         transition :first_warm_up => :first_half
         transition :second_warm_up => :second_half
+
+        # passive mode (manual rcon)
+        transition :wait_on_join => :first_half, :if => :passive_mode
+        transition :first_half => :second_half, :if => :passive_mode
       end
 
-      event :halftime do
+      event :warm_up_2 do
         transition :first_half => :second_warm_up
       end
 
@@ -48,14 +60,18 @@ module RconBot
       after_transition :first_half => :second_warm_up, :do => :wait_on_ready
       
       before_transition :first_warm_up => :first_half, :do => :exec_live_cfg
-      after_transition :first_warm_up => :first_half, :do => :process_match
+      after_transition any => :first_half, :do => :process_match
 
       before_transition :second_warm_up => :second_half, :do => :exec_live_cfg
-      after_transition :second_warm_up => :second_half, :do => :process_match
+      after_transition any => :second_half, :do => :process_match
 
       before_transition :second_half => :finished, :do => :exec_pub_cfg
       after_transition :second_half => :finished, :do => :save_stats
 
+    end
+
+    def passive_mode
+      true
     end
 
     def benchmark(*args)
@@ -67,9 +83,48 @@ module RconBot
 
     def save_stats
       puts "SAVE_STATS"
+      match_id = 1
+      [:first_half, :second_half].each do |half|
+        # kills, deaths, points
+        @stats[half].each do |stat|
+          killer, victim, weapon = stat
+          $redis_connection.incrby("K:#{match_id}:#{killer}", 1)
+          $redis_connection.incrby("D:#{match_id}:#{victim}", 1)
+          
+          # score updated using ELO formula
+          # http://en.wikipedia.org/wiki/Elo_rating_system
+          killer_old_score = $redis_connection.zscore("M:#{match_id}", killer) || 1000
+          victim_old_score = $redis_connection.zscore("M:#{match_id}", victim) || 1000
+
+          killer_expected_score = 1.0 / ( 1.0 + ( 10.0 ** ((victim_old_score.to_f - killer_old_score.to_f) / 400.0) ) )
+          victim_expected_score = 1.0 / ( 1.0 + ( 10.0 ** ((killer_old_score.to_f - victim_old_score.to_f) / 400.0) ) )
+
+          weapon_weight = 1
+          
+          killer_delta = weapon_weight.to_f * (1.0 - killer_expected_score)
+          victim_delta = weapon_weight.to_f * (0 - victim_expected_score)
+
+          $redis_connection.zadd("S:#{match_id}", killer_old_score + killer_delta, killer)
+          $redis_connection.zadd("S:#{match_id}", victim_old_score + victim_delta, victim)
+        end
+        # round info
+        @rounds[half].each do |player, count|
+          $redis_connection.zincrby("R:#{match_id}", count, player)
+        end
+
+        # aliases
+        @aliases[half].each do |steam_id, alias_info|
+          alias_info.each do |name, count|
+            $redis_connection.zincrby("ALIAS:#{steam_id}", count, name)
+          end
+        end
+        
+      end
+    
       puts "ROUNDS COMPLETED => #{round}"
       puts "WINNER => #{@result.inspect}"
       puts "STATS => #{@stats.inspect}"
+      puts "ROUNDS => #{@rounds.inspect}"
     end
     
     def initialize(team1, team2, map, rcon_connection, log_filename)
@@ -77,6 +132,10 @@ module RconBot
       @half_length = 15
       @team1 = team1
       @team2 = team2
+      @map = map
+      @stats = {}
+      @aliases = {}
+      @rounds = {}
       @spectator = Team.new('SPECTATOR') # this is not right!
       @rcon_connection = rcon_connection
       # monitor the logs 
@@ -101,13 +160,21 @@ module RconBot
     end
     
     def change_level
-      puts "CHANGE_LEVEL"
+      puts "CHANGE_LEVEL #{@map}"
       @rcon_connection.command("changelevel #{@map}") if @map
     end
 
-    def next_round
+    def reset_teams
+      puts "RESET_TEAMS"
       team1.respawn
       team2.respawn
+    end
+
+    def switch_teams
+      puts "SWITCH_TEAMS"
+      k = team1.players
+      team1.players = team2.players
+      team2.players = k
     end
 
     def halftime?
@@ -147,7 +214,6 @@ module RconBot
       ttl = 60 # seconds
       msg_interval = 5 # seconds
       (ttl/msg_interval).times do |c|
-      # while true do
         begin
           Timeout::timeout(msg_interval) do
             while true do
@@ -184,9 +250,12 @@ module RconBot
         line = @logfile.gets
         update_teams(line)
         if m = LIVE_REGEX.match(line) or /sv_restart/.match(line) # 2nd condition could be removed but will it catch 100% of the times
-          # flush half time stats because this might happen multiple times in some cases
+          puts "-" * 20 + " LIVE " + "-" * 20
           @live = true
-          @stats = Stats.new(team1, team2) # this can now be somewhere else
+          @stats[state_name] = []
+          @rounds[state_name] = {}
+          @aliases[state_name] = {}
+          reset_teams
         elsif @live and m = KILL_REGEX.match(line)
           t, k_name, k_steam_id, k_team_type, v_name, v_steam_id, v_team_type, weapon = m.to_a
 
@@ -197,34 +266,48 @@ module RconBot
           
           v_team.player_died(v_steam_id)
             
-          # add aliases in case of change
-          @stats.alias[k_steam_id] ||= {}
-          @stats.alias[k_steam_id][k_name] ||= 0
-          @stats.alias[k_steam_id][k_name] += 1
+          # add aliases in case of changes
+          @aliases[state_name][k_steam_id] ||= {}
+          @aliases[state_name][k_steam_id][k_name] ||= 0
+          @aliases[state_name][k_steam_id][k_name] += 1
 
-          @stats.alias[v_steam_id] ||= {}
-          @stats.alias[v_steam_id][v_name] ||= 0
-          @stats.alias[v_steam_id][v_name] += 1
+          @aliases[state_name][v_steam_id] ||= {}
+          @aliases[state_name][v_steam_id][v_name] ||= 0
+          @aliases[state_name][v_steam_id][v_name] += 1
           
-          # $redis.zincrby("alias:#{k_steam_id}", 1, k_name)
-          # $redis.zincrby("alias:#{v_steam_id}", 1, v_name)
-
-          # puts "#{k_steam_id} -x- #{v_steam_id}"          
           # kills
-          @stats.player["#{k_steam_id}_KILLS"] ||= 0
-          @stats.player["#{k_steam_id}_KILLS"] += 1 unless k_team_type == v_team_type
-          #k = $redis.incr("kills:#{k_steam_id}") #unless k_team == v_team # friendly fire
-          # deaths
-
-          @stats.player["#{v_steam_id}_DEATHS"] ||= 0
-          @stats.player["#{v_steam_id}_DEATHS"] += 1
-          #d = $redis.incr("deaths:#{v_steam_id}") #unless
           
-          # points for killer
-          points = (k_team_type == v_team_type ? 0 : ((k_team.size - k_team.alive_count) + (v_team.size - v_team.alive_count)))
+          # round recorder
+          @stats[state_name] << [k_steam_id, v_steam_id, weapon]
 
-          @stats.player["#{k_steam_id}_POINTS"] ||= 0
-          @stats.player["#{k_steam_id}_POINTS"] += points
+          # @stats[state_name].player[:kills][k_steam_id] ||= 0
+          # @stats[state_name].player[:kills][k_steam_id] += 1 unless k_team_type == v_team_type
+
+          # # deaths
+          # @stats[state_name].player[:deaths][v_steam_id] ||= 0
+          # @stats[state_name].player[:deaths][v_steam_id] += 1
+          
+          # # points
+          # points = (k_team_type == v_team_type ? 0 : ((k_team.size - k_team.alive_count) + (v_team.size - v_team.alive_count)))
+
+          # @stats[state_name].player[:points][k_steam_id] ||= 1000
+          # @stats[state_name].player[:points][v_steam_id] ||= 1000
+
+          # HLSTATS
+          # killer_points += (victim_points / killer_points) * (WEAPON_WEIGHT[weapon] || 1) * 5
+          # victim_points -= (victim_points / killer_points) * (WEAPON_WEIGHT[weapon] || 1) * 5
+
+          # ELO
+          # killer_old_points = @stats[state_name].player[:points][k_steam_id]
+          # victim_old_points = @stats[state_name].player[:points][v_steam_id]
+
+          # killer_change = 1.0 / ( 1.0 + ( 10.0 ** ((victim_old_points.to_f - killer_old_points.to_f) / 400.0) ) )
+          # victim_change = 1.0 / ( 1.0 + ( 10.0 ** ((killer_old_points.to_f - victim_old_points.to_f) / 400.0) ) )
+
+          # @stats[state_name].player[:points][k_steam_id] += ((WEAPON_WEIGHT[weapon] || 1) * (1 - killer_change))
+          # @stats[state_name].player[:points][v_steam_id] -= ((WEAPON_WEIGHT[weapon] || 1) * (0 - victim_change))
+
+          # team skills
 
           # case k_team
           # when 'CT'
@@ -233,7 +316,7 @@ module RconBot
           #   # $redis.zincrby("skill.t", points, k_steam_id)
           # end
           
-          puts " -- #{k_name[0..5]} (#{k_team_type[0]}) killed #{v_name[0..5]} (#{v_team_type[0]}) with #{weapon} -- #{points} #{'wtf' if k_team_type == v_team_type} #{@alive.inspect}"
+          puts " -- #{t.split(' ')[3]} #{k_name[0..5]} (#{k_team_type[0]}) killed #{v_name[0..5]} (#{v_team_type[0]}) with #{weapon} -- #{'WTF' if k_team_type == v_team_type}"
             
           # $redis.zincrby("skill.#{weapon}", points, k_steam_id)
           # $redis.zincrby("weapon.usage", 1, weapon)
@@ -241,6 +324,7 @@ module RconBot
           # PROBABLY BAD TECHNIQUE : update the score in (currently updating the ratio only)
           # $redis.zadd("ratio", k.to_f/# $redis.get("deaths:#{k_steam_id}").to_f, k_steam_id)
           # $redis.zadd("ratio", # $redis.get("kills:#{v_steam_id}").to_f/d.to_f, v_steam_id)
+
           # elsif $live and m = ATTACK_REGEX.match(line)
           #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
           #   # raise l if a_steam_id == t_steam_id # can happen in self nade where damage
@@ -248,21 +332,21 @@ module RconBot
         elsif @live and m = ROUNDEND_REGEX.match(line)
           t, winner, reason, ct_score, terrorist_score = m.to_a
 
+          # update score
           ct.send("#{state}_score=", ct_score.to_i)
           terrorist.send("#{state}_score=", terrorist_score.to_i)
 
-          # if first_half?
-          #   ct.first_half_score = ct_score.to_i
-          #   terrorist.first_half_score = terrorist_score.to_i
-          # elsif second_half?
-          #   ct.second_half_score = ct_score.to_i
-          #   terrorist.second_half_score = terrorist_score.to_i
-          # end
+          #player round counter
+          (team1.players | team2.players).each do |player|
+            @rounds[state_name][player] ||= 0
+            @rounds[state_name][player] += 1
+          end
           
-          puts "ROUND => #{round}, SCORE => #{team1.score}:#{team2.score} [#{reason}], LINEUP => [#{team1.players.size} v #{team2.players.size} (#{@spectator.players.size})]"
+          puts "ROUND => #{round}, SCORE => #{team1.score}:#{team2.score} [#{reason}], LINEUP => [#{team1.players.size} v #{team2.players.size} (#{@spectator.players.size})]    "
           
           if halftime?
             @live = false
+            switch_teams
             return
           end
           if second_half?
@@ -275,7 +359,7 @@ module RconBot
               return
             end
           end
-          next_round
+          reset_teams
         end
       end
       puts "EXITING PROCESS_MATCH"
@@ -309,7 +393,7 @@ module RconBot
           if @live and from_team_type != 'SPECTATOR' and to_team_type != 'SPECTATOR'
             # this guy is switching in between the match from T <-> CT
             # we must kick him or warn him unless he is dead and this is the last round (but our counts are wrong)
-            @rcon_connection.command("say RconBot has kicked #{j_name}. Switching teams in between a round is strictly prohibited!") # unless last_round?
+            @rcon_connection.command("say #{state} #{@live} RconBot has kicked #{j_name}. Switching teams in between a round is strictly prohibited!") # unless last_round?
             @rcon_connection.command("kick #{j_steam_id} \"Switching teams in between a round is strictly prohibited. Please reconnect!\"")
           end
           from_team = self.send(from_team_type.downcase)
@@ -319,7 +403,7 @@ module RconBot
         to_team = self.send(to_team_type.downcase)
         to_team.is_not_ready
         to_team.add_player(j_steam_id)
-        puts " -- -- >> #{j_steam_id} (#{from_team_type[0..0] rescue '-'} -> #{to_team_type[0..0] rescue '-'}), LINEUP => [#{team1.players.size} v #{team2.players.size} (#{@spectator.players.size})]"
+        puts " -- -- >> #{j_steam_id} (#{from_team_type[0..0] rescue 'X'} -> #{to_team_type[0..0] rescue 'X'}), LINEUP => [#{team1.players.size} v #{team2.players.size} (#{@spectator.players.size})]"
       elsif m = DISCONNECTED_REGEX.match(line)
         t, d_name, d_steam_id, from_team_type = m.to_a
         # reduce player reliability??? or should that be done from wait_on_ready (redis connection is slow)
@@ -328,7 +412,7 @@ module RconBot
           from_team.is_not_ready
           from_team.remove_player(d_steam_id)
         end
-        puts " -- -- << #{d_steam_id} (#{from_team_type[0..0] rescue '-'} -> #{to_team_type[0..0] rescue '-'}), LINEUP => [#{team1.players.size} v #{team2.players.size} (#{@spectator.players.size})]"
+        puts " -- -- << #{d_steam_id} (#{from_team_type[0..0] rescue 'X'} -> #{to_team_type[0..0] rescue 'X'}), LINEUP => [#{team1.players.size} v #{team2.players.size} (#{@spectator.players.size})]"
       end
 
     end
