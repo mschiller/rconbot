@@ -1,5 +1,4 @@
 module RconBot
-  # ELO System
   
   WEAPON_COST = {'ak47' => 2, 'm4a1' => 2, 'usp' => 4, 'glock' => '5', 'deagle' => 3, 'famas' => 3, 'galil' => 3, 'awp' => 1}
   
@@ -280,33 +279,6 @@ module RconBot
           # round recorder
           @stats[state_name] << [k_steam_id, v_steam_id, weapon]
 
-          # @stats[state_name].player[:kills][k_steam_id] ||= 0
-          # @stats[state_name].player[:kills][k_steam_id] += 1 unless k_team_type == v_team_type
-
-          # # deaths
-          # @stats[state_name].player[:deaths][v_steam_id] ||= 0
-          # @stats[state_name].player[:deaths][v_steam_id] += 1
-          
-          # # points
-          # points = (k_team_type == v_team_type ? 0 : ((k_team.size - k_team.alive_count) + (v_team.size - v_team.alive_count)))
-
-          # @stats[state_name].player[:points][k_steam_id] ||= 1000
-          # @stats[state_name].player[:points][v_steam_id] ||= 1000
-
-          # HLSTATS
-          # killer_points += (victim_points / killer_points) * (WEAPON_WEIGHT[weapon] || 1) * 5
-          # victim_points -= (victim_points / killer_points) * (WEAPON_WEIGHT[weapon] || 1) * 5
-
-          # ELO
-          # killer_old_points = @stats[state_name].player[:points][k_steam_id]
-          # victim_old_points = @stats[state_name].player[:points][v_steam_id]
-
-          # killer_change = 1.0 / ( 1.0 + ( 10.0 ** ((victim_old_points.to_f - killer_old_points.to_f) / 400.0) ) )
-          # victim_change = 1.0 / ( 1.0 + ( 10.0 ** ((killer_old_points.to_f - victim_old_points.to_f) / 400.0) ) )
-
-          # @stats[state_name].player[:points][k_steam_id] += ((WEAPON_WEIGHT[weapon] || 1) * (1 - killer_change))
-          # @stats[state_name].player[:points][v_steam_id] -= ((WEAPON_WEIGHT[weapon] || 1) * (0 - victim_change))
-
           # team skills
 
           # case k_team
@@ -320,10 +292,6 @@ module RconBot
             
           # $redis.zincrby("skill.#{weapon}", points, k_steam_id)
           # $redis.zincrby("weapon.usage", 1, weapon)
-          
-          # PROBABLY BAD TECHNIQUE : update the score in (currently updating the ratio only)
-          # $redis.zadd("ratio", k.to_f/# $redis.get("deaths:#{k_steam_id}").to_f, k_steam_id)
-          # $redis.zadd("ratio", # $redis.get("kills:#{v_steam_id}").to_f/d.to_f, v_steam_id)
 
           # elsif $live and m = ATTACK_REGEX.match(line)
           #   a_name, a_steam_id, a_team, t_name, t_steam_id, t_team, weapon, damage, damage_armor, health, armor = m.to_a[1..-1]
