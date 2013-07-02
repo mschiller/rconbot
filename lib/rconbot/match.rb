@@ -67,7 +67,7 @@ module RconBot
     end
 
     def passive_mode
-      true
+      @bot.passive_mode
     end
 
     def save_stats
