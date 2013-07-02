@@ -37,16 +37,17 @@ module RconBot
 
       begin
         @match.setup
-        Timeout::timeout(ttl) do 
-          @match.warm_up unless @passive_mode
-        end
-
-        @match.start
+        # first half
         Timeout::timeout(ttl) do 
           @match.warm_up unless @passive_mode
         end
         @match.start
-        @match.fulltime
+        # second half
+        Timeout::timeout(ttl) do 
+          @match.warm_up unless @passive_mode
+        end
+        @match.start
+        @match.finish
       rescue Timeout::Error
         @rcon_connection.command("say Match time expired, map will change...")
       end

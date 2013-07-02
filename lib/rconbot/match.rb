@@ -36,7 +36,7 @@ module RconBot
         transition :first_half => :second_half, :if => :passive_mode
       end
 
-      event :fulltime do
+      event :finish do
         transition :second_half => :finished
       end
 
