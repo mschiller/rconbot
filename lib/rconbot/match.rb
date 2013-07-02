@@ -17,12 +17,13 @@ module RconBot
       state :second_half
       state :finished
 
-      event :run do
+      event :setup do
         transition any => :wait_on_join
       end
 
-      event :warm_up_1 do
-        transition :wait_on_join => :first_warm_up 
+      event :warm_up do
+        transition :wait_on_join => :first_warm_up
+        transition :first_half => :second_warm_up
       end
 
       event :start do
@@ -33,10 +34,6 @@ module RconBot
         # passive mode (manual rcon)
         transition :wait_on_join => :first_half, :if => :passive_mode
         transition :first_half => :second_half, :if => :passive_mode
-      end
-
-      event :warm_up_2 do
-        transition :first_half => :second_warm_up
       end
 
       event :fulltime do

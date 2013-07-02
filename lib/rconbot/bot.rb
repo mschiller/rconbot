@@ -36,13 +36,14 @@ module RconBot
       @match = Match.new(self, @team1, @team2, map)
 
       begin
+        @match.setup
         Timeout::timeout(ttl) do 
-          @match.run
+          @match.warm_up unless @passive_mode
         end
-        @match.warm_up_1 unless @passive_mode
+
         @match.start
         Timeout::timeout(ttl) do 
-          @match.warm_up_2 unless @passive_mode
+          @match.warm_up unless @passive_mode
         end
         @match.start
         @match.fulltime
