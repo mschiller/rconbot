@@ -257,11 +257,6 @@ module RconBot
           
           v_team.player_died(v_steam_id)
             
-          # add aliases in case of changes
-          
-          # kills
-          
-          # round recorder
           @stats[state_name] << [k_steam_id, k_name, v_steam_id, v_name, weapon]
 
           # team skills
@@ -301,8 +296,7 @@ module RconBot
             @live = false
             switch_teams
             return
-          end
-          if second_half?
+          elsif second_half?
             if w = won?
               @live = false
               @result = w

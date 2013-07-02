@@ -3,8 +3,8 @@ module RconBot
     attr_reader :passive_mode, :rcon_connection, :log_filename, :match
 
     def initialize(options = {})
-      @team1 = options[:team1] || 'team1'
-      @team2 = options[:team2] || 'team2'
+      @team1 = options[:team1] || 'A'
+      @team2 = options[:team2] || 'B'
       @maps = options[:maps] || []
       @rotate = options[:rotate] || false
       @passive_mode = options[:passive_mode] || false
