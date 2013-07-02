@@ -72,22 +72,22 @@ module RconBot
 
     def save_stats
       puts "SAVE_STATS"
-      match_id = 1
+      match_id = $redis_connection.incr('rconbot:MATCH_SEQ')
       [:first_half, :second_half].each do |half|
         # kills, deaths, points
         @stats[half].each do |stat|
           killer, k_name, victim, v_name, weapon = stat
 
-          $redis_connection.zincrby("ALIAS:#{killer}", 1, k_name)
-          $redis_connection.zincrby("ALIAS:#{victim}", 1, v_name)
+          $redis_connection.zincrby("rconbot:ALIAS:#{killer}", 1, k_name)
+          $redis_connection.zincrby("rconbot:ALIAS:#{victim}", 1, v_name)
 
-          $redis_connection.incrby("K:#{match_id}:#{killer}", 1)
-          $redis_connection.incrby("D:#{match_id}:#{victim}", 1)
+          $redis_connection.incrby("rconbot:KILLS:#{match_id}:#{killer}", 1)
+          $redis_connection.incrby("rconbot:DEATHS:#{match_id}:#{victim}", 1)
           
           # score updated using ELO formula
           # http://en.wikipedia.org/wiki/Elo_rating_system
-          killer_old_score = $redis_connection.zscore("S:#{match_id}", killer) || 1000
-          victim_old_score = $redis_connection.zscore("S:#{match_id}", victim) || 1000
+          killer_old_score = $redis_connection.zscore("rconbot:SCORE:#{match_id}", killer) || 1000
+          victim_old_score = $redis_connection.zscore("rconbot:SCORE:#{match_id}", victim) || 1000
 
           killer_expected_score = 1.0 / ( 1.0 + ( 10.0 ** ((victim_old_score.to_f - killer_old_score.to_f) / 400.0) ) )
           victim_expected_score = 1.0 / ( 1.0 + ( 10.0 ** ((killer_old_score.to_f - victim_old_score.to_f) / 400.0) ) )
@@ -99,12 +99,12 @@ module RconBot
 
           puts "#{k_name} (+#{killer_delta}) -> #{v_name} (#{victim_delta})"
 
-          $redis_connection.zadd("S:#{match_id}", killer_old_score + killer_delta, killer)
-          $redis_connection.zadd("S:#{match_id}", victim_old_score + victim_delta, victim)
+          $redis_connection.zadd("rconbot:SCORE:#{match_id}", killer_old_score + killer_delta, killer)
+          $redis_connection.zadd("rconbot:SCORE:#{match_id}", victim_old_score + victim_delta, victim)
         end
         # round info
         @rounds[half].each do |player, count|
-          $redis_connection.incrby("R:#{match_id}:#{player}", count)
+          $redis_connection.incrby("rconbot:ROUNDS:#{match_id}:#{player}", count)
         end
       end
     
