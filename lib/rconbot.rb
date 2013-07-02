@@ -6,7 +6,6 @@ require 'state_machine'
 require 'rconbot'
 require 'rconbot/rcon_connection'
 require 'rconbot/team'
-require 'rconbot/stats'
 require 'rconbot/match'
 require 'rconbot/bot'
 

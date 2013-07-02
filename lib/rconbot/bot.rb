@@ -1,43 +1,39 @@
 module RconBot
   class Bot
-    attr_accessor :match
-    attr_reader :passive_mode
+    attr_reader :passive_mode, :rcon_connection, :log_filename, :match
 
-    # options :team1 :team2 :maps :timelimit
-    def connect(host, port, password, options = {})
-      options[:team1] ||= 'team1'
-      options[:team2] ||= 'team2'
-      options[:maps] ||= []
-      options[:repeat] ||= false
-      options[:passive_mode] ||= false
-      options[:password] ||= rand(100) # to be mailed to captains
-      
+    def initialize(options = {})
+      @team1 = options[:team1] || 'team1'
+      @team2 = options[:team2] || 'team2'
+      @maps = options[:maps] || []
+      @repeat = options[:repeat] || false
+      @passive_mode = options[:passive_mode] || false
+      @sv_password = options[:sv_password] || rand(9000) + 1000 # 4 digit password to be mailed to captains
+    end
+    
+    def connect(host, port, password, log_filename)
+      @log_filename = log_filename
       @rcon_connection = RconConnection.new(host, port, password)
-      @rcon_connection.command("sv_password \"#{options[:password]}\"")
-      @passive_mode = true
 
-      # kick everyone
-      # @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'")
-
+      @rcon_connection.command("sv_password \"#{@sv_password}\"")
+      @rcon_connection.command("kick all 'Sorry, scheduled match to take place. Visit www.fragg.in to participate.'") unless @passive_mode
 
       begin
-        if options[:maps].empty?
-          administer(options[:team1], options[:team2])
+        if @maps.empty?
+          administer
         else
-          options[:maps].each do |map|
-            administer(options[:team1], options[:team2], map)
+          @maps.each do |map|
+            administer(map)
           end
         end
-      end while options[:repeat]
+      end while @repeat
       @rcon_connection.disconnect
     end
 
-    def administer(team1, team2, map = nil)
-      @rcon_connection.command("hostname MetalZone Match - #{team1} vs #{team2} [rconbot.com]")
-      team1 = Team.new(team1)
-      team2 = Team.new(team2)
+    def administer(map = nil)
+      @rcon_connection.command("hostname MetalZone Match - #{@team1} vs #{@team2} [rconbot.com]")
       ttl = 1 * 60 # max 10 minutes for warmup
-      @match = Match.new(team1, team2, map, @rcon_connection, log_filename)
+      @match = Match.new(self, @team1, @team2, map)
 
       begin
         Timeout::timeout(ttl) do 
@@ -53,10 +49,6 @@ module RconBot
       rescue Timeout::Error
         @rcon_connection.command("say Match time expired, map will change...")
       end
-    end
-
-    def log_filename
-      '/home/hlds/hlds_match_screen.log'
     end
   end
 end

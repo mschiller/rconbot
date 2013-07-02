@@ -6,7 +6,7 @@ module RconBot
   $redis_connection = Redis.new(:db => 1)
 
   class Match
-    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :aliases, :map, :rcon_connection, :result
+    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :aliases, :map, :result
     attr_accessor :spectator, :live
     
     state_machine :initial => :wait_on_join do
@@ -73,27 +73,24 @@ module RconBot
       true
     end
 
-    def benchmark(*args)
-      puts args.inspect
-      puts Time.now
-      yield
-      puts Time.now
-    end
-
     def save_stats
       puts "SAVE_STATS"
       match_id = 1
       [:first_half, :second_half].each do |half|
         # kills, deaths, points
         @stats[half].each do |stat|
-          killer, victim, weapon = stat
+          killer, k_name, victim, v_name, weapon = stat
+
+          $redis_connection.zincrby("ALIAS:#{killer}", 1, k_name)
+          $redis_connection.zincrby("ALIAS:#{victim}", 1, v_name)
+
           $redis_connection.incrby("K:#{match_id}:#{killer}", 1)
           $redis_connection.incrby("D:#{match_id}:#{victim}", 1)
           
           # score updated using ELO formula
           # http://en.wikipedia.org/wiki/Elo_rating_system
-          killer_old_score = $redis_connection.zscore("M:#{match_id}", killer) || 1000
-          victim_old_score = $redis_connection.zscore("M:#{match_id}", victim) || 1000
+          killer_old_score = $redis_connection.zscore("S:#{match_id}", killer) || 1000
+          victim_old_score = $redis_connection.zscore("S:#{match_id}", victim) || 1000
 
           killer_expected_score = 1.0 / ( 1.0 + ( 10.0 ** ((victim_old_score.to_f - killer_old_score.to_f) / 400.0) ) )
           victim_expected_score = 1.0 / ( 1.0 + ( 10.0 ** ((killer_old_score.to_f - victim_old_score.to_f) / 400.0) ) )
@@ -103,21 +100,15 @@ module RconBot
           killer_delta = weapon_weight.to_f * (1.0 - killer_expected_score)
           victim_delta = weapon_weight.to_f * (0 - victim_expected_score)
 
+          puts "#{k_name} (+#{killer_delta}) -> #{v_name} (#{victim_delta})"
+
           $redis_connection.zadd("S:#{match_id}", killer_old_score + killer_delta, killer)
           $redis_connection.zadd("S:#{match_id}", victim_old_score + victim_delta, victim)
         end
         # round info
         @rounds[half].each do |player, count|
-          $redis_connection.zincrby("R:#{match_id}", count, player)
+          $redis_connection.incrby("R:#{match_id}:#{player}", count)
         end
-
-        # aliases
-        @aliases[half].each do |steam_id, alias_info|
-          alias_info.each do |name, count|
-            $redis_connection.zincrby("ALIAS:#{steam_id}", count, name)
-          end
-        end
-        
       end
     
       puts "ROUNDS COMPLETED => #{round}"
@@ -126,41 +117,45 @@ module RconBot
       puts "ROUNDS => #{@rounds.inspect}"
     end
     
-    def initialize(team1, team2, map, rcon_connection, log_filename)
+    def initialize(bot, team1, team2, map)
+      @bot = bot
       @half = 0
       @half_length = 15
-      @team1 = team1
-      @team2 = team2
+
+      @team1 = Team.new(team1)
+      @team2 = Team.new(team2)
+      @spectator = Team.new('SPECTATOR') 
+
       @map = map
+
       @stats = {}
       @aliases = {}
       @rounds = {}
-      @spectator = Team.new('SPECTATOR') # this is not right!
-      @rcon_connection = rcon_connection
+
       # monitor the logs 
-      @logfile = File.open(log_filename, "r")
-      @logfile.seek(0, IO::SEEK_END)
+      @log_file = File.open(@bot.log_filename, "r")
+      @log_file.seek(0, IO::SEEK_END)
       super()
     end
     
     def exec_warmup_cfg
       puts "EXEC_WARMUP_CFG"
-      @rcon_connection.command("exec warmup.cfg")
+      @bot.rcon_connection.command("exec warmup.cfg")
     end
 
     def exec_pub_cfg
       puts "EXEC_PUB_CFG"
-      @rcon_connection.command("exec pub.cfg")
+      @bot.rcon_connection.command("exec pub.cfg")
     end
 
     def exec_live_cfg
       puts "EXEC_LIVE_CFG"
-      @rcon_connection.command("exec live.cfg")
+      @bot.rcon_connection.command("exec live.cfg")
     end
     
     def change_level
       puts "CHANGE_LEVEL #{@map}"
-      @rcon_connection.command("changelevel #{@map}") if @map
+      @bot.rcon_connection.command("changelevel #{@map}") if @map
     end
 
     def reset_teams
@@ -201,8 +196,8 @@ module RconBot
     def wait_for_players
       puts "WAIT_FOR_PLAYERS"
       while true do
-        select([@logfile])
-        line = @logfile.gets
+        select([@log_file])
+        line = @log_file.gets
         update_teams(line)
         return if team1.size == 1 or team2.size == 1 # should be 5 and 5
       end
@@ -216,8 +211,8 @@ module RconBot
         begin
           Timeout::timeout(msg_interval) do
             while true do
-              select([@logfile])
-              line = @logfile.gets
+              select([@log_file])
+              line = @log_file.gets
               update_teams(line)
               # should the next one be some kinda elsif because of overhead
               if m = READY_REGEX.match(line)
@@ -233,10 +228,10 @@ module RconBot
             end
           end
         rescue Timeout::Error
-          @rcon_connection.command("say RconBot is at your service...")
-          @rcon_connection.command("say Team1 [C]: #{team1.players.length} players [#{team1.ready? ? 'READY' : 'NOT READY'}]")
-          @rcon_connection.command("say Team2 [T]: #{team2.players.length} players [#{team2.ready? ? 'READY' : 'NOT READY'}]")
-          @rcon_connection.command("say say ready when ready [time left: #{ttl - (c * msg_interval)} seconds]")
+          @bot.rcon_connection.command("say RconBot is at your service...")
+          @bot.rcon_connection.command("say Team1 [C]: #{team1.players.length} players [#{team1.ready? ? 'READY' : 'NOT READY'}]")
+          @bot.rcon_connection.command("say Team2 [T]: #{team2.players.length} players [#{team2.ready? ? 'READY' : 'NOT READY'}]")
+          @bot.rcon_connection.command("say say ready when ready [time left: #{ttl - (c * msg_interval)} seconds]")
         end
       end
 
@@ -245,8 +240,8 @@ module RconBot
     def process_match
       puts "PROCESS_MATCH"
       while true do 
-        select([@logfile])
-        line = @logfile.gets
+        select([@log_file])
+        line = @log_file.gets
         update_teams(line)
         if m = LIVE_REGEX.match(line) or /sv_restart/.match(line) # 2nd condition could be removed but will it catch 100% of the times
           puts "-" * 20 + " LIVE " + "-" * 20
@@ -266,18 +261,11 @@ module RconBot
           v_team.player_died(v_steam_id)
             
           # add aliases in case of changes
-          @aliases[state_name][k_steam_id] ||= {}
-          @aliases[state_name][k_steam_id][k_name] ||= 0
-          @aliases[state_name][k_steam_id][k_name] += 1
-
-          @aliases[state_name][v_steam_id] ||= {}
-          @aliases[state_name][v_steam_id][v_name] ||= 0
-          @aliases[state_name][v_steam_id][v_name] += 1
           
           # kills
           
           # round recorder
-          @stats[state_name] << [k_steam_id, v_steam_id, weapon]
+          @stats[state_name] << [k_steam_id, k_name, v_steam_id, v_name, weapon]
 
           # team skills
 
@@ -361,8 +349,8 @@ module RconBot
           if @live and from_team_type != 'SPECTATOR' and to_team_type != 'SPECTATOR'
             # this guy is switching in between the match from T <-> CT
             # we must kick him or warn him unless he is dead and this is the last round (but our counts are wrong)
-            @rcon_connection.command("say #{state} #{@live} RconBot has kicked #{j_name}. Switching teams in between a round is strictly prohibited!") # unless last_round?
-            @rcon_connection.command("kick #{j_steam_id} \"Switching teams in between a round is strictly prohibited. Please reconnect!\"")
+            @bot.rcon_connection.command("say #{state} #{@live} RconBot has kicked #{j_name}. Switching teams in between a round is strictly prohibited!") # unless last_round?
+            @bot.rcon_connection.command("kick #{j_steam_id} \"Switching teams in between a round is strictly prohibited. Please reconnect!\"")
           end
           from_team = self.send(from_team_type.downcase)
           from_team.is_not_ready
