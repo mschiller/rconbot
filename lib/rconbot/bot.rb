@@ -6,7 +6,7 @@ module RconBot
       @team1 = options[:team1] || 'team1'
       @team2 = options[:team2] || 'team2'
       @maps = options[:maps] || []
-      @repeat = options[:repeat] || false
+      @rotate = options[:rotate] || false
       @passive_mode = options[:passive_mode] || false
       @sv_password = options[:sv_password] || rand(9000) + 1000 # 4 digit password to be mailed to captains
     end
@@ -26,7 +26,7 @@ module RconBot
             administer(map)
           end
         end
-      end while @repeat
+      end while @rotate
       @rcon_connection.disconnect
     end
 
