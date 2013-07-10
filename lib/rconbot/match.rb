@@ -6,8 +6,8 @@ module RconBot
   $redis_connection = Redis.new(:db => 1)
 
   class Match
-    attr_reader :half_length, :team_size, :result, :team1, :team2, :stats, :aliases, :map, :result
-    attr_accessor :spectator, :live
+    attr_reader :half_length, :team_size, :result, :team1, :team2, :spectator, :stats, :aliases, :map, :result
+    attr_accessor :live
     
     state_machine :initial => :wait_on_join do
       state :wait_on_join
@@ -32,8 +32,8 @@ module RconBot
         transition :second_warm_up => :second_half
 
         # passive mode (manual rcon)
-        transition :wait_on_join => :first_half, :if => :passive_mode
-        transition :first_half => :second_half, :if => :passive_mode
+        transition :wait_on_join => :first_half, :if => :passive_mode?
+        transition :first_half => :second_half, :if => :passive_mode?
       end
 
       event :finish do
@@ -61,18 +61,20 @@ module RconBot
       before_transition :second_warm_up => :second_half, :do => :exec_live_cfg
       after_transition any => :second_half, :do => :process_match
 
-      before_transition :second_half => :finished, :do => :exec_pub_cfg
+      # before_transition :second_half => :finished, :do => :exec_pub_cfg
       after_transition :second_half => :finished, :do => :save_stats
 
     end
 
-    def passive_mode
+    def passive_mode?
       @bot.passive_mode
     end
 
     def save_stats
       puts "SAVE_STATS"
       match_id = $redis_connection.incr('rconbot:MATCH_SEQ')
+      # match_info = {:teams => [team1.players, team2.players, ], :players => }
+      # $redis_connection.hset("rconbot:MATCH:#{match_id}", {})
       [:first_half, :second_half].each do |half|
         # kills, deaths, points
         @stats[half].each do |stat|
@@ -86,11 +88,11 @@ module RconBot
           
           # score updated using ELO formula
           # http://en.wikipedia.org/wiki/Elo_rating_system
-          killer_old_score = $redis_connection.zscore("rconbot:SCORE:#{match_id}", killer) || 1000
-          victim_old_score = $redis_connection.zscore("rconbot:SCORE:#{match_id}", victim) || 1000
+          killer_old_score = $redis_connection.zscore("rconbot:SCORES:#{match_id}", killer) || 1000
+          victim_old_score = $redis_connection.zscore("rconbot:SCORES:#{match_id}", victim) || 1000
 
-          killer_expected_score = 1.0 / ( 1.0 + ( 10.0 ** ((victim_old_score.to_f - killer_old_score.to_f) / 400.0) ) )
-          victim_expected_score = 1.0 / ( 1.0 + ( 10.0 ** ((killer_old_score.to_f - victim_old_score.to_f) / 400.0) ) )
+          killer_expected_score = 1.0 / (1.0 + (10.0 ** ((victim_old_score.to_f - killer_old_score.to_f) / 400.0)))
+          victim_expected_score = 1.0 / (1.0 + (10.0 ** ((killer_old_score.to_f - victim_old_score.to_f) / 400.0)))
 
           weapon_weight = 1
           
@@ -99,8 +101,10 @@ module RconBot
 
           puts "#{k_name} (+#{killer_delta}) -> #{v_name} (#{victim_delta})"
 
-          $redis_connection.zadd("rconbot:SCORE:#{match_id}", killer_old_score + killer_delta, killer)
-          $redis_connection.zadd("rconbot:SCORE:#{match_id}", victim_old_score + victim_delta, victim)
+          $redis_connection.zadd("rconbot:SCORES:#{match_id}", killer_old_score + killer_delta, killer)
+          $redis_connection.zadd("rconbot:SCORES:#{match_id}", victim_old_score + victim_delta, victim)
+
+          # TODO: overall score should also be updated (across all matches), and this should not have expiry "rconbot:SCORE"
         end
         # round info
         @rounds[half].each do |player, count|
@@ -186,6 +190,10 @@ module RconBot
       team1.score + team2.score
     end
 
+    def first_round?
+      round == 1
+    end
+
     def last_round?
       round == @half_length - 1 or round == (@half_length * 2 - 1)
     end
@@ -200,13 +208,15 @@ module RconBot
       end
     end
 
+
     def wait_on_ready
       puts "WAIT_ON_READY"
-      ttl = 60 # seconds
       msg_interval = 5 # seconds
-      (ttl/msg_interval).times do |c|
+      # (ttl*60/msg_interval).times do |c|
+      while true do
+        t = Time.now
         begin
-          Timeout::timeout(msg_interval) do
+          Timeout::timeout(5) do
             while true do
               select([@log_file])
               line = @log_file.gets
@@ -224,16 +234,17 @@ module RconBot
               end
             end
           end
-        rescue Timeout::Error
+        rescue Timeout::Error => e
           @bot.rcon_connection.command("say RconBot is at your service...")
-          @bot.rcon_connection.command("say Team1 [C]: #{team1.players.length} players [#{team1.ready? ? 'READY' : 'NOT READY'}]")
-          @bot.rcon_connection.command("say Team2 [T]: #{team2.players.length} players [#{team2.ready? ? 'READY' : 'NOT READY'}]")
-          @bot.rcon_connection.command("say say ready when ready [time left: #{ttl - (c * msg_interval)} seconds]")
+          @bot.rcon_connection.command("say Team #{ct.name} [C]: #{ct.players.length} players [#{ct.ready? ? 'READY' : 'NOT READY'}]")
+          @bot.rcon_connection.command("say Team #{terrorist.name} [T]: #{terrorist.players.length} players [#{terrorist.ready? ? 'READY' : 'NOT READY'}]")
+          @bot.rcon_connection.command("say say ready when ready [time left: ? seconds]") #unless team1.ready? or team2.ready?
         end
+        # end
+        raise Timeout::Error.new if Time.now > t + 10.minutes and !team1.ready? and !team2.ready? #match itself has timed out (not to be confused with above)
       end
-
     end
-
+    
     def process_match
       puts "PROCESS_MATCH"
       while true do 
@@ -337,10 +348,10 @@ module RconBot
         t, j_name, j_steam_id, from_team_type, to_team_type = m.to_a
 
         if from_team_type
-          if @live and from_team_type != 'SPECTATOR' and to_team_type != 'SPECTATOR'
+          if @live and from_team_type != 'SPECTATOR' and to_team_type != 'SPECTATOR' and !(first_round? or last_round? or halftime?) # or passive_mode?)
             # this guy is switching in between the match from T <-> CT
             # we must kick him or warn him unless he is dead and this is the last round (but our counts are wrong)
-            @bot.rcon_connection.command("say #{state} #{@live} RconBot has kicked #{j_name}. Switching teams in between a round is strictly prohibited!") # unless last_round?
+            @bot.rcon_connection.command("say #{state} #{@live} RconBot has kicked #{j_name}. Switching teams in between a round is strictly prohibited!")
             @bot.rcon_connection.command("kick #{j_steam_id} \"Switching teams in between a round is strictly prohibited. Please reconnect!\"")
           end
           from_team = self.send(from_team_type.downcase)
